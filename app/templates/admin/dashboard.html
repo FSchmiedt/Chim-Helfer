@@ -1,0 +1,128 @@
+{% extends "admin/layout.html" %}
+
+{% block content %}
+
+<div class="mb-6">
+  <h1 class="text-2xl font-semibold">Übersicht</h1>
+  <p class="text-slate-500 text-sm">Schneller Blick auf alle wichtigen Zahlen.</p>
+</div>
+
+<!-- Top-Zahlen -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+  <div class="bg-white rounded-lg p-5 border border-slate-200">
+    <div class="text-xs uppercase tracking-wide text-slate-500">Gesamt</div>
+    <div class="text-3xl font-semibold mt-1">{{ total_helpers }}</div>
+    <div class="text-xs text-slate-500 mt-1">Helfer:innen angemeldet</div>
+  </div>
+  <div class="bg-white rounded-lg p-5 border border-slate-200">
+    <div class="text-xs uppercase tracking-wide text-slate-500">Nicht verplant</div>
+    <div class="text-3xl font-semibold mt-1">{{ unassigned_count }}</div>
+    <div class="text-xs text-slate-500 mt-1">keiner Schicht zugewiesen</div>
+  </div>
+  <div class="bg-white rounded-lg p-5 border border-slate-200">
+    <div class="text-xs uppercase tracking-wide text-slate-500">Offene Slots</div>
+    <div class="text-3xl font-semibold mt-1">{{ open_slots }}</div>
+    <div class="text-xs text-slate-500 mt-1">von {{ total_capacity }} Plätzen in {{ total_shifts }} Schichten</div>
+  </div>
+  <div class="bg-white rounded-lg p-5 border border-slate-200">
+    <div class="text-xs uppercase tracking-wide text-slate-500">Zuweisungen</div>
+    <div class="text-3xl font-semibold mt-1">{{ total_assigned }}</div>
+    <div class="text-xs text-slate-500 mt-1">Helfer ↔ Schicht</div>
+  </div>
+</div>
+
+<!-- Pfand-Kennzahlen -->
+<div class="grid grid-cols-2 md:grid-cols-2 gap-4 mb-8">
+  <a href="/admin/helpers?pfand=paid" class="bg-white rounded-lg p-5 border border-slate-200 hover:border-sky-400 transition">
+    <div class="text-xs uppercase tracking-wide text-slate-500">Pfand bezahlt, noch nicht zurück</div>
+    <div class="text-3xl font-semibold mt-1 text-sky-700">{{ pfand_paid_count }}</div>
+  </a>
+  <a href="/admin/helpers?pfand=returned" class="bg-white rounded-lg p-5 border border-slate-200 hover:border-emerald-400 transition">
+    <div class="text-xs uppercase tracking-wide text-slate-500">Pfand vollständig abgewickelt</div>
+    <div class="text-3xl font-semibold mt-1 text-emerald-700">{{ pfand_returned_count }}</div>
+  </a>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+  <!-- Status-Verteilung -->
+  <div class="bg-white rounded-lg border border-slate-200 p-5">
+    <h2 class="font-semibold mb-3">Status</h2>
+    {% set status_labels = {'registered': 'Angemeldet', 'confirmed': 'Bestätigt', 'declined': 'Abgelehnt', 'withdrawn': 'Zurückgezogen'} %}
+    <div class="space-y-2">
+      {% for key in ['registered', 'confirmed', 'declined', 'withdrawn'] %}
+        {% set count = status_counts.get(key, 0) %}
+        {% set pct = (count * 100 / total_helpers) if total_helpers > 0 else 0 %}
+        <div>
+          <div class="flex justify-between text-sm">
+            <span>{{ status_labels[key] }}</span>
+            <span class="font-medium">{{ count }}</span>
+          </div>
+          <div class="h-2 bg-slate-100 rounded overflow-hidden mt-1">
+            <div class="h-full bg-indigo-500" style="width: {{ pct }}%"></div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Helfer pro Tag -->
+  <div class="bg-white rounded-lg border border-slate-200 p-5">
+    <h2 class="font-semibold mb-3">Verfügbar pro Tag</h2>
+    {% if days %}
+    <div class="space-y-2">
+      {% for d in days %}
+        {% set count = day_counts.get(d.id, 0) %}
+        {% set pct = (count * 100 / total_helpers) if total_helpers > 0 else 0 %}
+        <div>
+          <div class="flex justify-between text-sm">
+            <span>{{ d.label }} <span class="text-slate-400">({{ d.date.strftime('%d.%m.') }})</span></span>
+            <a href="/admin/helpers?day_id={{ d.id }}" class="font-medium hover:text-indigo-600">{{ count }}</a>
+          </div>
+          <div class="h-2 bg-slate-100 rounded overflow-hidden mt-1">
+            <div class="h-full bg-emerald-500" style="width: {{ pct }}%"></div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-sm text-slate-500">Keine Festivaltage konfiguriert. <a href="/admin/config" class="text-indigo-600 hover:underline">→ Stammdaten</a></p>
+    {% endif %}
+  </div>
+
+  <!-- Wunschbereich-Verteilung (erste Wahl) -->
+  <div class="bg-white rounded-lg border border-slate-200 p-5 lg:col-span-2">
+    <h2 class="font-semibold mb-3">Wunschbereiche (erste Wahl)</h2>
+    {% if areas %}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2">
+      {% for a in areas %}
+        {% set count = area_first_counts.get(a.id, 0) %}
+        {% set pct = (count * 100 / total_helpers) if total_helpers > 0 else 0 %}
+        <div>
+          <div class="flex justify-between text-sm">
+            <span>{{ a.name }}</span>
+            <a href="/admin/helpers?area_id={{ a.id }}" class="font-medium hover:text-indigo-600">{{ count }}</a>
+          </div>
+          <div class="h-2 bg-slate-100 rounded overflow-hidden mt-1">
+            <div class="h-full bg-amber-500" style="width: {{ pct }}%"></div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-sm text-slate-500">Keine Einsatzbereiche konfiguriert.</p>
+    {% endif %}
+  </div>
+
+</div>
+
+<div class="mt-8 flex gap-3 flex-wrap">
+  <a href="/admin/export/helpers.csv" class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-md text-sm hover:bg-slate-50">
+    📥 CSV-Export (alle Helfer:innen)
+  </a>
+  <a href="/admin/helpers" class="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700">
+    Helfer:innen-Liste öffnen →
+  </a>
+</div>
+
+{% endblock %}

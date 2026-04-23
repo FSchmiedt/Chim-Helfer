@@ -1,0 +1,124 @@
+{% extends "admin/layout.html" %}
+
+{% block content %}
+
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-semibold">Schichtplan</h1>
+    <p class="text-slate-500 text-sm">Pro Bereich und Tag – klicke auf eine Schicht, um Leute zuzuweisen.</p>
+  </div>
+  <button onclick="document.getElementById('new-shift-dialog').showModal()"
+          class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">
+    + Neue Schicht
+  </button>
+</div>
+
+<!-- Filter -->
+<form method="get" class="bg-white border border-slate-200 rounded-lg p-3 mb-4 flex flex-wrap gap-3 items-end">
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Bereich</label>
+    <select name="area_id" class="px-2 py-1.5 border border-slate-300 rounded text-sm">
+      <option value="">alle</option>
+      {% for a in areas %}<option value="{{ a.id }}" {% if area_id == a.id %}selected{% endif %}>{{ a.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Tag</label>
+    <select name="day_id" class="px-2 py-1.5 border border-slate-300 rounded text-sm">
+      <option value="">alle</option>
+      {% for d in days %}<option value="{{ d.id }}" {% if day_id == d.id %}selected{% endif %}>{{ d.label }}</option>{% endfor %}
+    </select>
+  </div>
+  <button class="px-3 py-1.5 bg-slate-700 text-white rounded text-sm">Filtern</button>
+  {% if area_id or day_id %}<a href="/admin/shifts" class="text-sm text-slate-500 hover:underline">zurücksetzen</a>{% endif %}
+</form>
+
+<!-- Schichten-Grid -->
+{% if grouped %}
+<div class="space-y-6">
+  {% for area_name, days_map in grouped.items() %}
+  <section>
+    <h2 class="font-semibold text-lg mb-2">{{ area_name }}</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+      {% for day_label, shifts in days_map.items() %}
+        {% for s in shifts %}
+        <a href="/admin/shifts/{{ s.id }}" class="block bg-white border border-slate-200 rounded-lg p-4 hover:border-indigo-400 hover:shadow-sm transition">
+          <div class="flex items-start justify-between">
+            <div>
+              <div class="text-xs uppercase tracking-wide text-slate-500">{{ day_label }}</div>
+              <div class="font-semibold mt-0.5">{{ s.time_range }}</div>
+              {% if s.label %}<div class="text-sm text-slate-600 mt-1">{{ s.label }}</div>{% endif %}
+            </div>
+            {% set filled = s.assignments|length %}
+            {% set ratio_class = 'bg-green-100 text-green-800' if filled >= s.capacity else ('bg-amber-100 text-amber-800' if filled > 0 else 'bg-red-100 text-red-800') %}
+            <span class="px-2 py-0.5 rounded text-xs font-medium {{ ratio_class }}">{{ filled }} / {{ s.capacity }}</span>
+          </div>
+          {% if s.assignments %}
+          <div class="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-600">
+            {{ s.assignments | map(attribute='helper.first_name') | join(', ') }}
+          </div>
+          {% endif %}
+        </a>
+        {% endfor %}
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+{% else %}
+<div class="bg-white border border-slate-200 rounded-lg p-8 text-center">
+  <p class="text-slate-500 mb-4">Noch keine Schichten angelegt.</p>
+  <button onclick="document.getElementById('new-shift-dialog').showModal()"
+          class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">
+    Erste Schicht anlegen
+  </button>
+</div>
+{% endif %}
+
+<!-- Dialog: Neue Schicht -->
+<dialog id="new-shift-dialog" class="rounded-lg p-6 max-w-md w-full backdrop:bg-black/40">
+  <h3 class="font-semibold mb-4">Neue Schicht</h3>
+  <form method="post" action="/admin/shifts/new" class="space-y-3">
+    <div>
+      <label class="block text-sm font-medium mb-1">Bereich</label>
+      <select name="area_id" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+        {% for a in areas %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Tag</label>
+      <select name="day_id" required class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+        {% for d in days %}<option value="{{ d.id }}">{{ d.label }} ({{ d.date.strftime('%d.%m.') }})</option>{% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm font-medium mb-1">Label (optional)</label>
+      <input type="text" name="label" placeholder="z.B. Hauptbar Schicht 1"
+             class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+    </div>
+    <div class="grid grid-cols-3 gap-3">
+      <div>
+        <label class="block text-sm font-medium mb-1">Start</label>
+        <input type="time" name="start_time" required value="18:00"
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Ende</label>
+        <input type="time" name="end_time" required value="22:00"
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Anzahl</label>
+        <input type="number" name="capacity" required min="1" value="4"
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 pt-2">
+      <button type="button" onclick="document.getElementById('new-shift-dialog').close()"
+              class="px-3 py-1.5 rounded border border-slate-200 text-sm">Abbrechen</button>
+      <button class="px-3 py-1.5 rounded bg-indigo-600 text-white text-sm">Anlegen</button>
+    </div>
+  </form>
+</dialog>
+
+{% endblock %}

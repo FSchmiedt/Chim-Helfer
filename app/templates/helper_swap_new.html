@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="mb-4 text-sm">
+  <a href="/me" class="text-slate-500 hover:text-slate-800">← zurück zu Mein Bereich</a>
+</div>
+
+<h2 class="text-2xl font-semibold mb-2">Direkt mit einer Freund:in tauschen</h2>
+<p class="text-sm text-slate-500 mb-6">
+  Gib die Email-Adresse der Person ein, die deine Schicht übernehmen soll.
+  Sie bekommt die Anfrage in ihrem Helfer-Bereich (und per Mail, falls aktiv) und muss noch einmal bestätigen — dann gehört die Schicht ihr.
+</p>
+
+<div class="mb-6 bg-primary-600/5 border border-primary-600/20 rounded-lg p-4 text-sm">
+  <div class="text-xs uppercase tracking-wide text-slate-500">Deine Schicht</div>
+  <div class="font-semibold mt-0.5">
+    {% set s = assignment.shift %}
+    {{ s.area.name }}{% if assignment.role %} – {{ assignment.role.name }}{% endif %}
+  </div>
+  <div class="text-sm text-slate-700 mt-0.5">
+    {{ s.day.label }} · {{ s.day.date.strftime('%d.%m.%Y') }} · {{ s.time_range }}
+    {% if s.label %} · {{ s.label }}{% endif %}
+  </div>
+</div>
+
+{% if error %}
+<div class="mb-4 p-3 rounded bg-red-50 border border-red-200 text-red-800 text-sm">{{ error }}</div>
+{% endif %}
+
+<form method="post" action="/me/assignments/{{ assignment.id }}/swap"
+      class="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
+  <div>
+    <label class="block text-sm font-medium mb-1">Email der Freund:in *</label>
+    <input type="email" name="target_email" required value="{{ prefill_email }}"
+           placeholder="name@example.org"
+           class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+    <p class="text-xs text-slate-500 mt-1">
+      Muss eine bereits als Helfer:in angemeldete Person sein.
+    </p>
+  </div>
+  <div>
+    <label class="block text-sm font-medium mb-1">Nachricht (optional)</label>
+    <textarea name="message" rows="3" placeholder="Kontext, warum, Gegenleistung, …"
+              class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border"></textarea>
+  </div>
+  <div class="flex items-center justify-between gap-3 pt-2 border-t border-slate-100">
+    <a href="/me" class="text-sm text-slate-500 hover:text-slate-800">Abbrechen</a>
+    <button class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded">
+      Anfrage senden
+    </button>
+  </div>
+</form>
+
+{% endblock %}

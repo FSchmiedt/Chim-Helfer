@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="mb-6 flex items-start justify-between">
+  <div>
+    <h2 class="text-2xl font-semibold">Hallo, {{ helper.first_name }}!</h2>
+    <p class="text-sm text-slate-500 mt-1">
+      Status: <span class="font-medium">{{ {'registered': 'angemeldet', 'confirmed': 'bestätigt', 'declined': 'abgelehnt', 'withdrawn': 'zurückgezogen'}[helper.status] }}</span>
+      · <a href="/me/password" class="text-primary-600 hover:underline">Passwort ändern</a>
+    </p>
+  </div>
+</div>
+
+<!-- Flash / Query-Params (simple Hinweise) -->
+{% set p = request.query_params %}
+{% if p.get('swap_sent') %}
+  <div class="mb-4 p-3 rounded bg-green-50 border border-green-200 text-green-800 text-sm">
+    Tausch-Anfrage gesendet. Deine Freund:in muss jetzt noch bestätigen.
+    {% if not smtp_enabled %} <span class="italic">SMTP nicht aktiv – sag ihr am besten selbst Bescheid, dass sie sich einloggen und akzeptieren soll.</span>{% endif %}
+  </div>
+{% endif %}
+{% if p.get('taken') %}
+  <div class="mb-4 p-3 rounded bg-green-50 border border-green-200 text-green-800 text-sm">Schicht übernommen. Sie gehört jetzt dir.</div>
+{% endif %}
+{% if p.get('swap_accepted') %}
+  <div class="mb-4 p-3 rounded bg-green-50 border border-green-200 text-green-800 text-sm">Tausch angenommen. Die Schicht ist jetzt deine.</div>
+{% endif %}
+{% if p.get('declined') %}
+  <div class="mb-4 p-3 rounded bg-slate-50 border border-slate-200 text-slate-700 text-sm">Anfrage abgelehnt.</div>
+{% endif %}
+{% if p.get('cancelled') %}
+  <div class="mb-4 p-3 rounded bg-slate-50 border border-slate-200 text-slate-700 text-sm">Anfrage zurückgezogen.</div>
+{% endif %}
+{% if p.get('error') == 'time_conflict' %}
+  <div class="mb-4 p-3 rounded bg-red-50 border border-red-200 text-red-800 text-sm">Zeitlicher Konflikt – du bist zu der Zeit bereits verplant.</div>
+{% endif %}
+{% if p.get('error') == 'already_assigned' %}
+  <div class="mb-4 p-3 rounded bg-red-50 border border-red-200 text-red-800 text-sm">Du bist dieser Schicht schon zugewiesen.</div>
+{% endif %}
+{% if p.get('error') == 'origin_changed' %}
+  <div class="mb-4 p-3 rounded bg-amber-50 border border-amber-200 text-amber-800 text-sm">Die Schicht wurde inzwischen anders vergeben – die Anfrage ist damit hinfällig.</div>
+{% endif %}
+
+<!-- Eingehende Tausch-Anfragen (priorisiert anzeigen) -->
+{% if incoming_requests %}
+<section class="mb-8 bg-white rounded-lg border border-amber-300 shadow-sm">
+  <div class="px-5 py-3 border-b border-amber-200 bg-amber-50 rounded-t-lg">
+    <h3 class="font-semibold text-amber-900">
+      Offene Tausch-Anfragen an dich ({{ incoming_requests|length }})
+    </h3>
+  </div>
+  <ul class="divide-y divide-slate-100">
+    {% for req in incoming_requests %}
+    {% set s = req.from_assignment.shift %}
+    <li class="px-5 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <div class="text-sm">
+        <div>
+          <span class="font-medium">{{ req.from_helper.first_name }} {{ req.from_helper.last_name }}</span>
+          fragt, ob du ihre Schicht übernimmst:
+        </div>
+        <div class="mt-1 text-slate-700">
+          <strong>{{ s.area.name }}</strong>{% if req.from_assignment.role %} – {{ req.from_assignment.role.name }}{% endif %}
+          · {{ s.day.label }} · {{ s.time_range }}
+        </div>
+        {% if req.message %}
+        <div class="mt-2 p-2 bg-slate-50 border border-slate-200 rounded text-xs italic text-slate-700">
+          „{{ req.message }}"
+        </div>
+        {% endif %}
+      </div>
+      <div class="flex gap-2 flex-shrink-0">
+        <form method="post" action="/me/swap-requests/{{ req.id }}/accept" class="inline">
+          <button class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded">Annehmen</button>
+        </form>
+        <form method="post" action="/me/swap-requests/{{ req.id }}/decline" class="inline">
+          <button class="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm rounded">Ablehnen</button>
+        </form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<!-- Meine Schichten -->
+<section class="mb-8">
+  <div class="flex items-center justify-between mb-3">
+    <h3 class="text-lg font-semibold">Meine Schichten</h3>
+    <a href="/board" class="text-sm text-primary-600 hover:underline">
+      Tausch-Board öffnen{% if open_board_count > 0 %} ({{ open_board_count }} offen){% endif %} →
+    </a>
+  </div>
+  {% if assignments %}
+  <ul class="space-y-3">
+    {% for a in assignments %}
+    {% set s = a.shift %}
+    {% set my_offer = my_offers_by_assignment.get(a.id) %}
+    {% set my_reqs = my_open_requests_by_assignment.get(a.id, []) %}
+    <li class="bg-white border border-slate-200 rounded-lg p-4">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <div class="text-xs uppercase tracking-wide text-slate-500">{{ s.day.label }} · {{ s.day.date.strftime('%d.%m.') }}</div>
+          <div class="font-semibold mt-0.5">
+            {{ s.area.name }}{% if a.role %} – {{ a.role.name }}{% endif %}
+          </div>
+          <div class="text-sm text-slate-600 mt-0.5">{{ s.time_range }}{% if s.label %} · {{ s.label }}{% endif %}</div>
+        </div>
+        <div class="text-right">
+          {% if my_offer %}
+            <span class="inline-block px-2 py-0.5 bg-amber-100 text-amber-800 rounded text-xs">auf dem Board</span>
+          {% endif %}
+          {% if my_reqs %}
+            <span class="inline-block px-2 py-0.5 bg-sky-100 text-sky-800 rounded text-xs">
+              {{ my_reqs|length }} Anfrage{% if my_reqs|length != 1 %}n{% endif %} offen
+            </span>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Aktive eigene Anfragen zu dieser Schicht -->
+      {% if my_reqs %}
+      <ul class="mt-3 pt-3 border-t border-slate-100 text-xs text-slate-600 space-y-1">
+        {% for r in my_reqs %}
+        <li class="flex items-center justify-between gap-2">
+          <span>Anfrage an <strong>{{ r.to_helper.first_name }} {{ r.to_helper.last_name }}</strong> – wartet</span>
+          <form method="post" action="/me/swap-requests/{{ r.id }}/cancel" class="inline">
+            <button class="text-slate-500 hover:text-red-600 underline">zurückziehen</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+
+      <div class="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-2">
+        {% if my_offer %}
+          <form method="post" action="/me/offers/{{ my_offer.id }}/cancel">
+            <button class="px-3 py-1.5 text-xs rounded bg-white border border-slate-300 hover:bg-slate-50 text-slate-700">
+              Vom Board nehmen
+            </button>
+          </form>
+        {% else %}
+          <details class="relative">
+            <summary class="cursor-pointer px-3 py-1.5 text-xs rounded bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 list-none">
+              Aufs Board stellen
+            </summary>
+            <form method="post" action="/me/assignments/{{ a.id }}/offer"
+                  class="mt-2 p-3 bg-slate-50 border border-slate-200 rounded space-y-2">
+              <label class="block text-xs text-slate-600">Nachricht (optional, z.B. „kurzfristig krank, wer übernimmt?"):</label>
+              <textarea name="message" rows="2"
+                        class="w-full px-2 py-1 border border-slate-300 rounded text-xs"></textarea>
+              <button class="px-3 py-1.5 text-xs rounded bg-primary-600 hover:bg-primary-700 text-white">
+                Auf Board stellen
+              </button>
+            </form>
+          </details>
+          <a href="/me/assignments/{{ a.id }}/swap"
+             class="px-3 py-1.5 text-xs rounded bg-white border border-slate-300 hover:bg-slate-50 text-slate-700">
+            Direkt mit Freund:in tauschen
+          </a>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="bg-white border border-dashed border-slate-300 rounded-lg p-6 text-center text-sm text-slate-500">
+    Du bist noch keiner Schicht zugewiesen. Das Helfer-Team vergibt Schichten nach der Anmeldephase.
+  </div>
+  {% endif %}
+</section>
+
+<!-- Meine Angaben -->
+<section class="bg-white rounded-lg border border-slate-200 p-5 mb-8">
+  <h3 class="font-semibold mb-3">Deine Angaben</h3>
+  <dl class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+    <div><dt class="text-slate-500 text-xs">Email</dt><dd>{{ helper.email }}</dd></div>
+    <div><dt class="text-slate-500 text-xs">Telefon</dt><dd>{{ helper.phone or '—' }}</dd></div>
+    <div class="sm:col-span-2">
+      <dt class="text-slate-500 text-xs">Verfügbar an</dt>
+      <dd class="mt-1 flex flex-wrap gap-1">
+        {% for d in days %}
+          <span class="inline-block px-2 py-0.5 rounded text-xs
+                       {% if d.id in avail_day_ids %}bg-emerald-100 text-emerald-800{% else %}bg-slate-100 text-slate-400{% endif %}">
+            {{ d.label }}
+          </span>
+        {% endfor %}
+      </dd>
+    </div>
+    <div class="sm:col-span-2">
+      <dt class="text-slate-500 text-xs">Wunschbereiche</dt>
+      <dd class="mt-1 flex flex-wrap gap-1">
+        {% for p in helper.preferences|sort(attribute='rank') %}
+          <span class="inline-block px-2 py-0.5 rounded text-xs bg-primary-600/10 text-primary-700">{{ p.rank }}. {{ p.area.name }}</span>
+        {% endfor %}
+      </dd>
+    </div>
+  </dl>
+  <p class="text-xs text-slate-500 mt-4">
+    Änderungen an deinen Angaben? Schreib kurz ans Helfer-Team.
+  </p>
+</section>
+
+{% endblock %}

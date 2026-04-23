@@ -1,0 +1,44 @@
+# Render.com Blueprint – https://render.com/docs/infrastructure-as-code
+# Deploy via: https://dashboard.render.com/blueprints → "New Blueprint" → dein GitHub-Repo wählen
+services:
+  - type: web
+    name: chimaera-helfer-tool
+    runtime: docker
+    plan: free
+    autoDeploy: true
+    envVars:
+      # --- DB: Connection String aus Neon / anderem Provider ---
+      - key: DATABASE_URL
+        sync: false  # manuell im Render-Dashboard eintragen
+      # --- Admin-Zugang ---
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false  # manuell setzen
+      - key: SECRET_KEY
+        generateValue: true  # Render generiert automatisch einen Zufallsstring
+      # --- Festival ---
+      - key: FESTIVAL_NAME
+        value: Chimaera Festival
+      - key: MIN_SHIFTS
+        value: "2"
+      - key: MIN_DAYS
+        value: "2"
+      - key: BENEFITS_MIN_SHIFTS
+        value: "3"
+      - key: BENEFITS_MIN_DAYS
+        value: "3"
+      # --- SMTP (optional, manuell eintragen falls gewünscht) ---
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_ADDRESS
+        sync: false
+      - key: SMTP_FROM_NAME
+        value: Chimaera Helfer-Team
+      # --- Dev-Flag: in Produktion unbedingt false lassen ---
+      - key: DEBUG_SHOW_RESET_LINK
+        value: "false"

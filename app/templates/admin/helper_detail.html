@@ -1,0 +1,275 @@
+{% extends "admin/layout.html" %}
+
+{% block content %}
+
+<div class="mb-4">
+  <a href="/admin/helpers" class="text-sm text-slate-500 hover:text-slate-800">← zurück zur Liste</a>
+</div>
+
+<div class="flex items-start justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-semibold">{{ helper.first_name }} {{ helper.last_name }}</h1>
+    <p class="text-sm text-slate-500">
+      Angemeldet am {{ helper.created_at.strftime('%d.%m.%Y um %H:%M') }}
+      {% if not helper.password_hash %}
+        · <span class="text-amber-700">kein Passwort gesetzt</span>
+      {% endif %}
+    </p>
+  </div>
+  <form method="post" action="/admin/helpers/{{ helper.id }}/delete"
+        onsubmit="return confirm('Diese Helfer:in inkl. aller Zuweisungen wirklich löschen?');">
+    <button class="px-3 py-1.5 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded text-sm">Löschen</button>
+  </form>
+</div>
+
+{% if reset_url is defined and reset_url %}
+<div class="mb-6 p-4 rounded-md bg-amber-50 border border-amber-300">
+  <p class="font-semibold text-amber-900 text-sm mb-2">Neuer Reset-Link (24h gültig):</p>
+  <div class="flex items-center gap-2">
+    <input type="text" readonly value="{{ reset_url }}"
+           onclick="this.select()"
+           class="flex-1 px-2 py-1 text-xs font-mono bg-white border border-amber-300 rounded" />
+    <button type="button" onclick="navigator.clipboard.writeText('{{ reset_url }}'); this.textContent='✓'"
+            class="px-2 py-1 text-xs bg-amber-600 hover:bg-amber-700 text-white rounded">kopieren</button>
+  </div>
+  <p class="text-xs text-amber-900/80 mt-2">
+    Leite den Link nur dieser Person weiter. Er wird hier nur einmal angezeigt.
+  </p>
+</div>
+{% endif %}
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+  <!-- Stammdaten (editierbar) -->
+  <form method="post" action="/admin/helpers/{{ helper.id }}/save"
+        class="bg-white border border-slate-200 rounded-lg p-5 lg:col-span-2">
+    <input type="hidden" name="section" value="contact" />
+    <div class="flex items-start justify-between mb-3">
+      <h2 class="font-semibold">Angaben</h2>
+      <form method="post" action="/admin/helpers/{{ helper.id }}/reset-link"
+            onsubmit="return confirm('Neuen Reset-Link erzeugen? Der alte wird ungültig.');"
+            class="inline">
+        <button class="text-xs text-slate-600 hover:text-indigo-600 underline" formaction="/admin/helpers/{{ helper.id }}/reset-link">Passwort-Reset-Link erzeugen</button>
+      </form>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Vorname</label>
+        <input type="text" name="first_name" value="{{ helper.first_name }}" required
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Nachname</label>
+        <input type="text" name="last_name" value="{{ helper.last_name }}" required
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Email</label>
+        <input type="email" name="email" value="{{ helper.email }}" required
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Telefon</label>
+        <input type="tel" name="phone" value="{{ helper.phone or '' }}"
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Geburtsdatum</label>
+        <input type="date" name="date_of_birth" value="{{ helper.date_of_birth.isoformat() }}"
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Schon dabei gewesen?</label>
+        <div class="text-sm py-1.5">
+          {% if helper.been_here_before %}Ja – {{ helper.previous_festivals or 'keine Angabe' }}{% else %}Nein{% endif %}
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">IBAN</label>
+        <input type="text" name="iban" value="{{ helper.iban or '' }}"
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm font-mono" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">PayPal</label>
+        <input type="text" name="paypal" value="{{ helper.paypal or '' }}"
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+    </div>
+
+    {% if helper.notes %}
+    <div class="mt-4">
+      <label class="block text-xs text-slate-500 mb-1">Notizen von {{ helper.first_name }}</label>
+      <textarea name="notes" rows="3" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">{{ helper.notes }}</textarea>
+    </div>
+    {% else %}
+    <div class="mt-4">
+      <label class="block text-xs text-slate-500 mb-1">Notizen von {{ helper.first_name }} (leer)</label>
+      <textarea name="notes" rows="2" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm"></textarea>
+    </div>
+    {% endif %}
+
+    <div class="mt-4 flex justify-end">
+      <button class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">Stammdaten speichern</button>
+    </div>
+  </form>
+
+  <!-- Pfand -->
+  <form method="post" action="/admin/helpers/{{ helper.id }}/save"
+        class="bg-white border border-slate-200 rounded-lg p-5">
+    <input type="hidden" name="section" value="pfand" />
+    <h2 class="font-semibold mb-3">Pfand</h2>
+
+    <label class="flex items-start gap-2 text-sm mb-3 cursor-pointer">
+      <input type="checkbox" name="pfand_paid" {% if helper.pfand_paid %}checked{% endif %}
+             class="mt-0.5 rounded text-indigo-600 focus:ring-indigo-600" />
+      <span>
+        <span class="font-medium">Pfand bezahlt</span>
+        {% if helper.pfand_paid and helper.pfand_paid_at %}
+          <span class="block text-xs text-slate-500">am {{ helper.pfand_paid_at.strftime('%d.%m.%Y') }}</span>
+        {% endif %}
+      </span>
+    </label>
+
+    <label class="flex items-start gap-2 text-sm mb-4 cursor-pointer">
+      <input type="checkbox" name="pfand_returned" {% if helper.pfand_returned %}checked{% endif %}
+             class="mt-0.5 rounded text-indigo-600 focus:ring-indigo-600" />
+      <span>
+        <span class="font-medium">Pfand zurückgegeben</span>
+        {% if helper.pfand_returned and helper.pfand_returned_at %}
+          <span class="block text-xs text-slate-500">am {{ helper.pfand_returned_at.strftime('%d.%m.%Y') }}</span>
+        {% endif %}
+      </span>
+    </label>
+
+    <button class="w-full px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">Pfand speichern</button>
+
+    <p class="text-xs text-slate-500 mt-3">
+      Zurückgabe setzt sich automatisch zurück, wenn „bezahlt" ausgehakt wird.
+    </p>
+  </form>
+
+  <!-- Verfügbarkeit + Wünsche (editierbar) -->
+  <form method="post" action="/admin/helpers/{{ helper.id }}/save"
+        class="bg-white border border-slate-200 rounded-lg p-5 lg:col-span-2">
+    <input type="hidden" name="section" value="prefs" />
+    <h2 class="font-semibold mb-3">Verfügbarkeit & Wunschbereiche</h2>
+
+    <div class="mb-4">
+      <label class="block text-xs text-slate-500 mb-2">Verfügbar an</label>
+      {% set avail_day_ids = helper.availabilities | map(attribute='day_id') | list %}
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+        {% for d in days %}
+          {% set checked = d.id in avail_day_ids %}
+          <label class="flex items-center gap-2 px-2 py-1.5 border rounded text-sm cursor-pointer
+                        {% if checked %}bg-emerald-50 border-emerald-400{% else %}border-slate-200 hover:bg-slate-50{% endif %}">
+            <input type="checkbox" name="availability_day_ids" value="{{ d.id }}"
+                   {% if checked %}checked{% endif %}
+                   class="rounded text-emerald-600 focus:ring-emerald-600" />
+            <span>{{ d.label }}</span>
+          </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="mb-4">
+      <label class="block text-xs text-slate-500 mb-2">Wunschbereiche mit Rang (1 = beste Wahl, leer = nicht gewünscht)</label>
+      {% set current_ranks = {} %}
+      {% for p in helper.preferences %}{# noqa: nur zum Bauen #}{% endfor %}
+      <div class="space-y-1.5">
+        {% for a in areas %}
+          {% set current_rank = namespace(value=None) %}
+          {% for p in helper.preferences %}
+            {% if p.area_id == a.id %}{% set current_rank.value = p.rank %}{% endif %}
+          {% endfor %}
+          <div class="flex items-center justify-between gap-3 p-2 border border-slate-200 rounded text-sm">
+            <span>{{ a.name }}</span>
+            <select name="area_rank_{{ a.id }}" class="px-2 py-1 border border-slate-300 rounded text-sm">
+              <option value="">–</option>
+              {% for n in range(1, 6) %}
+                <option value="{{ n }}" {% if current_rank.value == n %}selected{% endif %}>{{ n }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="flex justify-end">
+      <button class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">Verfügbarkeit+Wünsche speichern</button>
+    </div>
+  </form>
+
+  <!-- Admin-Bereich: Status, Notizen, Rollen-Zutrauen -->
+  <form method="post" action="/admin/helpers/{{ helper.id }}/save"
+        class="bg-white border border-slate-200 rounded-lg p-5">
+    <input type="hidden" name="section" value="admin" />
+    <h2 class="font-semibold mb-3">Admin-Notizen</h2>
+
+    <div class="mb-4">
+      <label class="block text-xs text-slate-500 mb-1">Status</label>
+      <select name="status" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+        {% for key, lbl in [('registered', 'angemeldet'), ('confirmed', 'bestätigt'), ('declined', 'abgelehnt'), ('withdrawn', 'zurückgezogen')] %}
+          <option value="{{ key }}" {% if helper.status == key %}selected{% endif %}>{{ lbl }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="mb-4">
+      <label class="block text-xs text-slate-500 mb-1">Interne Notizen (nur Admin sieht das)</label>
+      <textarea name="admin_notes" rows="3" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">{{ helper.admin_notes or '' }}</textarea>
+    </div>
+
+    <div class="mb-4">
+      <h3 class="font-semibold text-sm mb-1">Zugetraute Rollen</h3>
+      <p class="text-xs text-slate-500 mb-2">Pro Bereich einzeln. Nur Bereiche mit Wunsch sind farbig.</p>
+      <div class="space-y-2">
+        {% for area_name, roles in grouped_roles.items() %}
+          {% set area_wanted = roles[0].area.id in pref_areas %}
+          <div class="border border-slate-200 rounded p-2 {% if not area_wanted %}opacity-60{% endif %}">
+            <div class="text-sm font-medium mb-1 flex items-center gap-2">
+              {{ area_name }}
+              {% if area_wanted %}<span class="text-xs text-emerald-600">(Wunsch)</span>{% endif %}
+            </div>
+            <div class="flex flex-wrap gap-x-3 gap-y-1">
+              {% for r in roles %}
+              <label class="flex items-center gap-1 text-sm">
+                <input type="checkbox" name="trusted_role_ids" value="{{ r.id }}"
+                       {% if r.id in trust_ids %}checked{% endif %}
+                       class="rounded text-indigo-600 focus:ring-indigo-600" />
+                <span>{{ r.name }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+        {% else %}
+          <p class="text-sm text-slate-500">Keine Rollen konfiguriert. <a href="/admin/config" class="text-indigo-600 hover:underline">→ Stammdaten</a></p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <button class="w-full px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">Admin-Bereich speichern</button>
+  </form>
+
+  <!-- Zugewiesene Schichten -->
+  <div class="bg-white border border-slate-200 rounded-lg p-5 lg:col-span-3">
+    <h2 class="font-semibold mb-3">Zugewiesene Schichten</h2>
+    {% if assignments %}
+    <ul class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 text-sm">
+      {% for a in assignments %}
+      <li class="border-l-4 border-indigo-500 pl-3 py-1 bg-slate-50 rounded-r">
+        <a href="/admin/shifts/{{ a.shift.id }}" class="hover:text-indigo-600 block">
+          <div class="font-medium">{{ a.shift.area.name }}{% if a.role %} – {{ a.role.name }}{% endif %}</div>
+          <div class="text-xs text-slate-500">{{ a.shift.day.label }} · {{ a.shift.time_range }}</div>
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-sm text-slate-500">Noch nicht verplant. Zuweisungen passieren über den Schichtplan.</p>
+    {% endif %}
+  </div>
+
+</div>
+
+{% endblock %}

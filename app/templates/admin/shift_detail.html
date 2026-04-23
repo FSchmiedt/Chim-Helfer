@@ -1,0 +1,99 @@
+{% extends "admin/layout.html" %}
+
+{% block content %}
+
+<div class="mb-4">
+  <a href="/admin/shifts" class="text-sm text-slate-500 hover:text-slate-800">← zurück zum Schichtplan</a>
+</div>
+
+<div class="flex items-start justify-between mb-6">
+  <div>
+    <div class="text-xs uppercase tracking-wide text-slate-500">{{ shift.area.name }}</div>
+    <h1 class="text-2xl font-semibold">{{ shift.day.label }} · {{ shift.time_range }}</h1>
+    {% if shift.label %}<p class="text-slate-600">{{ shift.label }}</p>{% endif %}
+    <p class="text-sm text-slate-500 mt-1">Kapazität: {{ shift.assignments|length }} / {{ shift.capacity }}</p>
+  </div>
+  <form method="post" action="/admin/shifts/{{ shift.id }}/delete"
+        onsubmit="return confirm('Schicht löschen?');">
+    <button class="px-3 py-1.5 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded text-sm">Schicht löschen</button>
+  </form>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+  <!-- Zugewiesene -->
+  <div class="bg-white border border-slate-200 rounded-lg p-5">
+    <h2 class="font-semibold mb-3">Zugewiesen ({{ shift.assignments|length }})</h2>
+    {% if shift.assignments %}
+    <ul class="divide-y divide-slate-100">
+      {% for a in shift.assignments %}
+      <li class="py-2 flex items-center justify-between">
+        <div>
+          <a href="/admin/helpers/{{ a.helper.id }}" class="font-medium hover:text-indigo-600">{{ a.helper.full_name }}</a>
+          {% if a.role %}<span class="text-xs text-slate-500 ml-2">{{ a.role.name }}</span>{% endif %}
+        </div>
+        <form method="post" action="/admin/shifts/{{ shift.id }}/unassign/{{ a.helper.id }}">
+          <button class="text-xs text-red-600 hover:underline">entfernen</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-sm text-slate-500">Noch niemand zugewiesen.</p>
+    {% endif %}
+  </div>
+
+  <!-- Kandidat:innen -->
+  <div class="bg-white border border-slate-200 rounded-lg p-5">
+    <h2 class="font-semibold mb-1">Kandidat:innen</h2>
+    <p class="text-xs text-slate-500 mb-4">
+      Helfer:innen, die am <strong>{{ shift.day.label }}</strong> verfügbar sind und <strong>{{ shift.area.name }}</strong> als Wunschbereich angegeben haben (sortiert nach Rang).
+    </p>
+    {% if candidates %}
+    <ul class="divide-y divide-slate-100">
+      {% for c in candidates %}
+      {% set already = c.id in assigned_ids %}
+      {% set info = role_info_by_helper.get(c.id, {'trusted_role_ids': [], 'trust_names': []}) %}
+      {% set trusted_role_ids = info.trusted_role_ids %}
+      {% set trust_names = info.trust_names %}
+      <li class="py-3 {% if already %}opacity-40{% endif %}">
+        <form method="post" action="/admin/shifts/{{ shift.id }}/assign" class="flex items-center gap-3">
+          <input type="hidden" name="helper_id" value="{{ c.id }}" />
+          <div class="flex-1">
+            <div class="flex items-center gap-2">
+              <a href="/admin/helpers/{{ c.id }}" class="font-medium text-sm hover:text-indigo-600">{{ c.full_name }}</a>
+              <span class="text-xs px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded">{{ prefs_rank_for_area(c, shift.area_id) }}. Wahl</span>
+            </div>
+            <div class="text-xs text-slate-500 mt-0.5">
+              {% if trust_names %}
+                zutraubar: {{ trust_names | join(', ') }}
+              {% elif roles %}
+                <span class="text-slate-400">keine Rollen zugetraut</span>
+              {% endif %}
+            </div>
+          </div>
+          {% if roles %}
+          <select name="role_id" class="px-2 py-1 border border-slate-300 rounded text-xs">
+            <option value="">— Rolle —</option>
+            {% for r in roles %}
+              <option value="{{ r.id }}" {% if r.id not in trusted_role_ids %}class="text-slate-400"{% endif %}>
+                {{ r.name }}{% if r.id not in trusted_role_ids %} (nicht zugetraut){% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          {% endif %}
+          <button {% if already %}disabled{% endif %}
+                  class="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs disabled:bg-slate-300">
+            {% if already %}zugewiesen{% else %}zuweisen{% endif %}
+          </button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-sm text-slate-500">Keine passenden Kandidat:innen.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="mb-4 text-sm text-slate-600">
+  Schon angemeldet?
+  <a href="/login" class="text-primary-600 hover:underline font-medium">Hier einloggen</a>.
+</div>
+
+{% if errors %}
+<div class="mb-6 p-4 rounded-md bg-red-50 border border-red-200 text-red-800">
+  <p class="font-semibold mb-1">Bitte prüfe deine Angaben.</p>
+  <ul class="list-disc ml-5 text-sm">
+    {% for field, msg in errors.items() %}
+      <li>{{ msg }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<!-- Infoblock mit Bedingungen -->
+<section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-6">
+  <h2 class="text-lg font-semibold mb-3">Bevor du dich anmeldest</h2>
+  <div class="prose prose-sm max-w-none text-slate-700">
+    <p><strong>Als Helfer:in beim {{ festival_name }} solltest du mindestens:</strong></p>
+    <ul class="list-disc ml-5">
+      <li>{{ min_shifts }} Schicht{% if min_shifts > 1 %}en{% endif %} übernehmen</li>
+      <li>an {{ min_days }} Tag{% if min_days > 1 %}en{% endif %} verfügbar sein</li>
+    </ul>
+    <p class="mt-3"><strong>Für zusätzliche Benefits (Merchandise, ...) sind es:</strong></p>
+    <ul class="list-disc ml-5">
+      <li>mindestens {{ benefits_min_shifts }} Schichten</li>
+      <li>Verfügbarkeit an {{ benefits_min_days }} Tagen</li>
+    </ul>
+    <div class="mt-4 p-3 rounded bg-amber-50 border border-amber-200 text-amber-900 text-sm">
+      <p class="font-semibold">Wichtige Hinweise</p>
+      <ul class="list-disc ml-5">
+        <li>Es gibt keine Garantie – unser genauer Bedarf steht noch nicht fest, wir wissen also noch nicht, wie viele von euch wir nehmen können.</li>
+        <li>Du musst volljährig sein, um beim {{ festival_name }} helfen zu können.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<form method="post" action="/register" class="space-y-6" id="registration-form" novalidate>
+
+  <!-- Persönliche Daten -->
+  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+    <h2 class="text-lg font-semibold mb-4">Deine Angaben</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">Vorname *</label>
+        <input type="text" name="first_name" required
+               value="{{ form_data.first_name if form_data else '' }}"
+               class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Nachname *</label>
+        <input type="text" name="last_name" required
+               value="{{ form_data.last_name if form_data else '' }}"
+               class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">E-Mail *</label>
+        <input type="email" name="email" required
+               value="{{ form_data.email if form_data else '' }}"
+               class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Telefon</label>
+        <input type="tel" name="phone"
+               value="{{ form_data.phone if form_data else '' }}"
+               class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Geburtsdatum *</label>
+        <input type="date" name="date_of_birth" required
+               value="{{ form_data.date_of_birth if form_data else '' }}"
+               class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+      </div>
+    </div>
+  </section>
+
+  <!-- Verfügbarkeit -->
+  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+    <h2 class="text-lg font-semibold mb-3">An welchen Tagen bist du verfügbar? *</h2>
+    <p class="text-sm text-slate-600 mb-4">Mehrfachauswahl möglich.</p>
+    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+      {% for d in days %}
+        {% set checked = form_data and d.id in (form_data.availability_day_ids or []) %}
+        <label class="flex items-center gap-2 px-3 py-2 border rounded hover:bg-slate-50 cursor-pointer
+                      {% if checked %}bg-primary-600/5 border-primary-600{% else %}border-slate-200{% endif %}">
+          <input type="checkbox" name="availability_day_ids" value="{{ d.id }}"
+                 {% if checked %}checked{% endif %}
+                 class="rounded text-primary-600 focus:ring-primary-600" />
+          <span class="text-sm">
+            <strong>{{ d.label }}</strong>
+            <span class="block text-xs text-slate-500">{{ d.date.strftime('%d.%m.%Y') }}</span>
+          </span>
+        </label>
+      {% else %}
+        <p class="col-span-full text-amber-700 text-sm">
+          Noch keine Festivaltage konfiguriert – bitte wende dich ans Helfer-Team.
+        </p>
+      {% endfor %}
+    </div>
+  </section>
+
+  <!-- Wunschbereiche mit Ranking -->
+  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+    <h2 class="text-lg font-semibold mb-2">In welchen Bereichen möchtest du helfen? *</h2>
+    <p class="text-sm text-slate-600 mb-4">
+      Wähle deine Wunschbereiche aus und gib eine Priorität an
+      (<strong>1 = erste Wahl</strong>, 2 = zweite Wahl, ...). Leer lassen = nicht gewünscht.
+    </p>
+    <div class="space-y-2">
+      {% for a in areas %}
+      {% set current_rank = form_data and form_data.area_preferences and form_data.area_preferences.get(a.id) %}
+      <div class="flex items-center justify-between gap-4 p-3 border border-slate-200 rounded hover:bg-slate-50">
+        <div class="flex-1">
+          <div class="font-medium text-sm">{{ a.name }}</div>
+          {% if a.description %}
+          <div class="text-xs text-slate-500">{{ a.description }}</div>
+          {% endif %}
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-slate-500">Priorität</label>
+          <select name="area_rank_{{ a.id }}"
+                  class="rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-2 py-1 border text-sm">
+            <option value="">–</option>
+            {% for n in range(1, 6) %}
+              <option value="{{ n }}" {% if current_rank == n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      {% else %}
+        <p class="text-amber-700 text-sm">Noch keine Einsatzbereiche konfiguriert.</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  <!-- Erfahrung -->
+  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+    <h2 class="text-lg font-semibold mb-3">Bist du schon mal dabei gewesen?</h2>
+    <div class="space-y-3">
+      <div class="flex gap-4">
+        <label class="flex items-center gap-2">
+          <input type="radio" name="been_here_before" value="yes"
+                 {% if form_data and form_data.been_here_before %}checked{% endif %}
+                 class="text-primary-600 focus:ring-primary-600" /> Ja
+        </label>
+        <label class="flex items-center gap-2">
+          <input type="radio" name="been_here_before" value="no"
+                 {% if not form_data or not form_data.been_here_before %}checked{% endif %}
+                 class="text-primary-600 focus:ring-primary-600" /> Nein
+        </label>
+      </div>
+      <div id="previous-festivals-wrap">
+        <label class="block text-sm font-medium mb-1">Wenn ja: wo und in welcher Rolle?</label>
+        <input type="text" name="previous_festivals"
+               value="{{ form_data.previous_festivals if form_data else '' }}"
+               placeholder="z.B. Chimaera 2024 (Bar), ..."
+               class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+      </div>
+    </div>
+  </section>
+
+  <!-- Pfand-Daten -->
+  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+    <h2 class="text-lg font-semibold mb-2">Für Pfand / Auslagen (optional)</h2>
+    <p class="text-sm text-slate-600 mb-4">
+      Damit wir dir Pfand oder Auslagen erstatten können. Nur eines der beiden ist nötig.
+    </p>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">IBAN</label>
+        <input type="text" name="iban"
+               value="{{ form_data.iban if form_data else '' }}"
+               placeholder="DE..."
+               class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border font-mono text-sm" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">PayPal</label>
+        <input type="text" name="paypal"
+               value="{{ form_data.paypal if form_data else '' }}"
+               placeholder="Email oder @username"
+               class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+      </div>
+    </div>
+  </section>
+
+  <!-- Notizen -->
+  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+    <label class="block text-sm font-medium mb-1">Sonstige Anmerkungen</label>
+    <textarea name="notes" rows="3"
+              placeholder="Allergien, besondere Fähigkeiten, Einschränkungen, ..."
+              class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border">{{ form_data.notes if form_data else '' }}</textarea>
+  </section>
+
+  <!-- Passwort -->
+  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+    <h2 class="text-lg font-semibold mb-2">Passwort wählen *</h2>
+    <p class="text-sm text-slate-600 mb-4">
+      Damit du später deine Schichten einsehen und ggf. tauschen kannst, brauchen wir ein Passwort.
+      Mindestens {{ password_min_len }} Zeichen. (Vergessen? Du kannst es jederzeit zurücksetzen.)
+    </p>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">Passwort *</label>
+        <input type="password" name="password" required minlength="{{ password_min_len }}"
+               autocomplete="new-password"
+               class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-1">Passwort wiederholen *</label>
+        <input type="password" name="password_confirm" required minlength="{{ password_min_len }}"
+               autocomplete="new-password"
+               class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+      </div>
+    </div>
+  </section>
+
+  <!-- Einwilligungen -->
+  <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+    <div class="space-y-3">
+      <label class="flex items-start gap-3">
+        <input type="checkbox" name="is_adult_confirmed" required
+               {% if form_data and form_data.is_adult_confirmed %}checked{% endif %}
+               class="mt-1 rounded text-primary-600 focus:ring-primary-600" />
+        <span class="text-sm">Ich bestätige, dass ich <strong>mindestens 18 Jahre alt</strong> bin.</span>
+      </label>
+      <label class="flex items-start gap-3">
+        <input type="checkbox" name="accepted_no_guarantee" required
+               {% if form_data and form_data.accepted_no_guarantee %}checked{% endif %}
+               class="mt-1 rounded text-primary-600 focus:ring-primary-600" />
+        <span class="text-sm">Ich habe verstanden, dass es <strong>keine Garantie</strong> für einen Helfer:innen-Platz gibt.</span>
+      </label>
+    </div>
+  </section>
+
+  <div class="flex justify-end">
+    <button type="submit"
+            class="bg-primary-600 hover:bg-primary-700 text-white font-medium px-6 py-3 rounded-md shadow-sm transition">
+      Anmeldung absenden
+    </button>
+  </div>
+</form>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // "Wo warst du schon?"-Feld auf- und zuklappen, je nach Ja/Nein.
+  (function () {
+    const wrap = document.getElementById('previous-festivals-wrap');
+    const radios = document.querySelectorAll('input[name="been_here_before"]');
+    function sync() {
+      const yes = document.querySelector('input[name="been_here_before"][value="yes"]').checked;
+      wrap.style.display = yes ? '' : 'none';
+    }
+    radios.forEach(r => r.addEventListener('change', sync));
+    sync();
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}{{ festival_name }} – Helfer-Anmeldung{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/css/main.css" />
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: { primary: { 600: '#2b4c8c', 700: '#1f3a6e' } } } }
+    }
+  </script>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+  <header class="bg-primary-600 text-white">
+    <div class="max-w-3xl mx-auto px-4 py-5 flex items-baseline justify-between gap-4 flex-wrap">
+      <h1 class="text-xl md:text-2xl font-semibold">
+        <a href="/" class="hover:opacity-90">{{ festival_name }} – Helfer:innen</a>
+      </h1>
+      <nav class="text-sm flex items-center gap-4">
+        {% if current_helper is defined and current_helper %}
+          <a href="/me" class="text-white/90 hover:text-white">Mein Bereich</a>
+          <a href="/board" class="text-white/90 hover:text-white">Board</a>
+          <form method="post" action="/logout" class="inline">
+            <button class="text-white/70 hover:text-white">Logout</button>
+          </form>
+        {% else %}
+          <a href="/login" class="text-white/90 hover:text-white">Login</a>
+        {% endif %}
+        <a href="/admin" class="text-white/60 hover:text-white/90 text-xs">Admin</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 py-8">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="text-center text-xs text-slate-500 py-6">
+    {{ festival_name }} · Helfer-Tool
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

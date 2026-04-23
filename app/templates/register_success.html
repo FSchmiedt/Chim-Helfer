@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="bg-white rounded-lg shadow-sm border border-slate-200 p-8 text-center">
+  <div class="mx-auto w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mb-4">
+    <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+    </svg>
+  </div>
+  <h2 class="text-2xl font-semibold mb-2">Danke, {{ helper.first_name }}!</h2>
+  <p class="text-slate-700 mb-4">
+    Deine Anmeldung ist bei uns eingegangen.
+  </p>
+  <p class="text-sm text-slate-500">
+    Wir melden uns per Email ({{ helper.email }}), sobald der genaue Helfer:innen-Bedarf feststeht.
+  </p>
+  <p class="text-sm text-slate-500 mt-4">
+    Bei Fragen oder Änderungen: einfach Email ans Helfer-Team.
+  </p>
+</div>
+{% endblock %}
