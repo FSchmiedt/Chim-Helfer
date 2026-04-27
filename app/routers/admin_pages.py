@@ -161,6 +161,7 @@ def helpers_list(
     status_filter: str | None = Query(None, alias="status"),
     experience: str | None = Query(None),  # "yes" | "no"
     pfand: str | None = Query(None),  # "unpaid" | "paid" | "returned"
+    verified: str | None = Query(None),  # "yes" | "no"
     q: str | None = Query(None),
 ):
     if (r := require_admin_redirect(request)):
@@ -189,6 +190,10 @@ def helpers_list(
         query = query.filter(models.Helper.pfand_paid.is_(True), models.Helper.pfand_returned.is_(False))
     elif pfand == "returned":
         query = query.filter(models.Helper.pfand_returned.is_(True))
+    if verified == "yes":
+        query = query.filter(models.Helper.email_verified_at.isnot(None))
+    elif verified == "no":
+        query = query.filter(models.Helper.email_verified_at.is_(None))
     if q:
         like = f"%{q.lower()}%"
         query = query.filter(
@@ -213,6 +218,7 @@ def helpers_list(
             status_filter=status_filter,
             experience=experience,
             pfand=pfand,
+            verified=verified,
             q=q or "",
         ),
     )

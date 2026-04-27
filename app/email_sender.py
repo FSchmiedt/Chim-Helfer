@@ -143,6 +143,19 @@ def send_password_reset_email(helper, reset_url: str) -> None:
     _send_single(helper.email, helper.first_name, subject, body)
 
 
+def send_verification_email(helper, verify_url: str) -> None:
+    subject = f"Bitte bestätige deine Email – {settings.FESTIVAL_NAME}"
+    body = (
+        f"Hallo {helper.first_name},\n\n"
+        f"vielen Dank für deine Anmeldung als Helfer:in beim {settings.FESTIVAL_NAME}!\n\n"
+        f"Bitte bestätige deine Email-Adresse, indem du auf den folgenden Link klickst:\n\n"
+        f"{verify_url}\n\n"
+        f"Wenn du dich nicht angemeldet hast, ignoriere diese Mail einfach.\n\n"
+        f"Liebe Grüße\nDas Helfer-Team"
+    )
+    _send_single(helper.email, helper.first_name, subject, body)
+
+
 def send_swap_request_email(to_helper, from_helper, assignment, message: str | None) -> None:
     shift = assignment.shift
     subject = f"Tausch-Anfrage von {from_helper.first_name} – {settings.FESTIVAL_NAME}"

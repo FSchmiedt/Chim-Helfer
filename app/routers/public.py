@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, EmailStr, ValidationError, field_validator
+from pydantic import BaseModel, EmailStr, ValidationError, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -50,21 +50,21 @@ class RegistrationInput(BaseModel):
     def strip_and_check(cls, v: str) -> str:
         v = (v or "").strip()
         if not v:
-            raise ValueError("Pflichtfeld")
+            raise ValueError("Pflichtfeld.")
         return v
 
     @field_validator("is_adult_confirmed")
     @classmethod
     def must_be_adult(cls, v: bool) -> bool:
         if not v:
-            raise ValueError("Du musst volljährig sein.")
+            raise ValueError("Bitte bestätige, dass du volljährig bist.")
         return v
 
     @field_validator("accepted_no_guarantee")
     @classmethod
     def must_accept(cls, v: bool) -> bool:
         if not v:
-            raise ValueError("Bitte bestätige die Hinweise.")
+            raise ValueError("Bitte bestätige die Hinweise oben.")
         return v
 
     @field_validator("date_of_birth")
@@ -89,8 +89,84 @@ class RegistrationInput(BaseModel):
     @classmethod
     def password_strong_enough(cls, v: str) -> str:
         if len(v) < PASSWORD_MIN_LEN:
-            raise ValueError(f"Passwort muss mindestens {PASSWORD_MIN_LEN} Zeichen lang sein.")
+            raise ValueError(f"Mindestens {PASSWORD_MIN_LEN} Zeichen.")
         return v
+
+    @field_validator("iban")
+    @classmethod
+    def iban_format(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        v = v.replace(" ", "").upper()
+        if not _is_valid_iban(v):
+            raise ValueError("Das sieht nicht nach einer gültigen IBAN aus. Prüfe Schreibweise.")
+        return v
+
+    @field_validator("paypal")
+    @classmethod
+    def paypal_format(cls, v: str | None) -> str | None:
+        if v is None or v == "":
+            return None
+        v = v.strip()
+        if not _is_valid_paypal(v):
+            raise ValueError("Bitte gib entweder deine PayPal-Email oder ein @-Handle (z.B. @namelang) an.")
+        return v
+
+    @model_validator(mode="after")
+    def iban_or_paypal_required(self):
+        if not self.iban and not self.paypal:
+            raise ValueError("Bitte gib entweder eine IBAN oder dein PayPal an, damit wir Pfand zurückzahlen können.")
+        return self
+
+
+# ---------------------------------------------------------------------------
+# IBAN/PayPal-Validierung (lokal, ohne externe Bibliotheken)
+# ---------------------------------------------------------------------------
+def _is_valid_iban(iban: str) -> bool:
+    """ISO 13616 IBAN-Check inkl. mod-97 Prüfsumme.
+
+    Akzeptiert Buchstaben/Zahlen ohne Leerzeichen, Länge 15..34. Reicht für
+    europäische IBANs vollkommen aus.
+    """
+    if len(iban) < 15 or len(iban) > 34:
+        return False
+    if not iban[:2].isalpha() or not iban[2:4].isdigit():
+        return False
+    if not all(c.isalnum() for c in iban):
+        return False
+
+    # Land + Prüfziffer ans Ende verschieben, Buchstaben in Zahlen umwandeln
+    rearranged = iban[4:] + iban[:4]
+    digits = []
+    for c in rearranged:
+        if c.isdigit():
+            digits.append(c)
+        else:
+            digits.append(str(ord(c) - 55))  # A=10, B=11, ..., Z=35
+    return int("".join(digits)) % 97 == 1
+
+
+def _is_valid_paypal(value: str) -> bool:
+    """PayPal akzeptiert Email-Adressen oder PayPal.Me-Handles.
+
+    Wir erlauben:
+    - eine Email-ähnliche Eingabe (alles mit @ und . dahinter)
+    - oder ein Handle, das mit @ beginnt: @<3-20 alphanumerische Zeichen>
+    - oder einen vollen paypal.me-Link
+    """
+    import re
+    if not value:
+        return False
+    # Email-ähnlich
+    if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value):
+        return True
+    # @-Handle
+    if re.match(r"^@[A-Za-z0-9_.-]{3,30}$", value):
+        return True
+    # paypal.me/...
+    if re.match(r"^(https?://)?(www\.)?paypal\.(me|com)/[A-Za-z0-9_.-]{3,30}/?$", value):
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -127,18 +203,25 @@ async def register_submit(request: Request, db: Session = Depends(get_db)):
 
     # Listen + Dicts aus Form-Daten extrahieren
     availability_day_ids = [int(x) for x in form.getlist("availability_day_ids")]
+    # Wunschbereiche: alle Bereiche aus der DB bekommen einen Rang.
+    # Wenn das Formular für einen Bereich leer schickt, bedeutet das Prio 5
+    # (= "egal, geht zur Not auch") — kein Bereich wird komplett ausgeschlossen.
+    all_areas = db.query(models.Area).all()
+    valid_area_ids = {a.id for a in all_areas}
     area_preferences: dict[int, int] = {}
-    for key in form:
-        if key.startswith("area_rank_"):
-            try:
-                area_id = int(key.split("_")[-1])
-                rank_str = form.get(key)
-                if rank_str and rank_str != "":
-                    rank = int(rank_str)
-                    if rank >= 1:
-                        area_preferences[area_id] = rank
-            except ValueError:
-                continue
+    for area_id in valid_area_ids:
+        raw_val = (form.get(f"area_rank_{area_id}") or "").strip()
+        if not raw_val:
+            area_preferences[area_id] = 5
+            continue
+        try:
+            rank = int(raw_val)
+            if 1 <= rank <= 5:
+                area_preferences[area_id] = rank
+            else:
+                area_preferences[area_id] = 5
+        except ValueError:
+            area_preferences[area_id] = 5
 
     # Pydantic-Validierung
     raw = {
@@ -172,16 +255,8 @@ async def register_submit(request: Request, db: Session = Depends(get_db)):
     try:
         data = RegistrationInput(**raw)
     except ValidationError as exc:
-        errors = {err["loc"][0]: err["msg"] for err in exc.errors()}
+        errors = _humanize_errors(exc)
         return _render_form_with_errors(request, db, errors, raw)
-
-    # Mindestens ein Bereich gewählt?
-    if not area_preferences:
-        return _render_form_with_errors(
-            request, db,
-            {"area_preferences": "Bitte wähle mindestens einen Wunschbereich."},
-            raw,
-        )
 
     # Doppel-Anmeldung?
     existing = db.query(models.Helper).filter(models.Helper.email == data.email).one_or_none()
@@ -208,6 +283,7 @@ async def register_submit(request: Request, db: Session = Depends(get_db)):
         accepted_no_guarantee=data.accepted_no_guarantee,
         status="registered",
         password_hash=hash_password(data.password),
+        email_verification_token=generate_token(),
     )
     db.add(helper)
     db.flush()
@@ -226,6 +302,18 @@ async def register_submit(request: Request, db: Session = Depends(get_db)):
 
     db.commit()
 
+    # Verifikations-Mail senden (oder Link in Konsole loggen, falls SMTP aus)
+    base = str(request.base_url).rstrip("/")
+    verify_url = f"{base}/verify/{helper.email_verification_token}"
+    if settings.smtp_enabled:
+        try:
+            from ..email_sender import send_verification_email
+            send_verification_email(helper, verify_url)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[register] Verifikations-Mail fehlgeschlagen: {exc}")
+    else:
+        print(f"[register] Verifikations-Link für {helper.email}: {verify_url}")
+
     # Erfolg + automatisch einloggen
     resp = templates.TemplateResponse(
         "register_success.html",
@@ -233,6 +321,8 @@ async def register_submit(request: Request, db: Session = Depends(get_db)):
             "request": request,
             "festival_name": settings.FESTIVAL_NAME,
             "helper": helper,
+            "smtp_enabled": settings.smtp_enabled,
+            "manual_verify_link": verify_url if (getattr(settings, "DEBUG_SHOW_RESET_LINK", False) and not settings.smtp_enabled) else None,
         },
     )
     resp.set_cookie(
@@ -244,6 +334,133 @@ async def register_submit(request: Request, db: Session = Depends(get_db)):
         secure=False,
     )
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Email-Verifikation
+# ---------------------------------------------------------------------------
+@router.get("/verify/{token}", response_class=HTMLResponse)
+def verify_email(token: str, request: Request, db: Session = Depends(get_db)):
+    helper = db.query(models.Helper).filter(
+        models.Helper.email_verification_token == token
+    ).one_or_none()
+    if not helper:
+        return templates.TemplateResponse(
+            "helper_verify_result.html",
+            {
+                "request": request,
+                "festival_name": settings.FESTIVAL_NAME,
+                "ok": False,
+                "already": False,
+            },
+            status_code=400,
+        )
+    already = helper.email_verified_at is not None
+    if not already:
+        helper.email_verified_at = datetime.utcnow()
+        helper.email_verification_token = None
+        db.commit()
+
+    resp = templates.TemplateResponse(
+        "helper_verify_result.html",
+        {
+            "request": request,
+            "festival_name": settings.FESTIVAL_NAME,
+            "ok": True,
+            "already": already,
+            "helper": helper,
+        },
+    )
+    # Falls noch nicht eingeloggt, mit-Login
+    resp.set_cookie(
+        HELPER_COOKIE_NAME,
+        make_helper_session_cookie(helper.id),
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,
+        secure=False,
+    )
+    return resp
+
+
+@router.post("/me/resend-verify")
+def resend_verify(request: Request, db: Session = Depends(get_db)):
+    """Bekannter Helfer fordert eine neue Verifikations-Mail an."""
+    from ..auth import get_current_helper
+    helper = get_current_helper(request, db)
+    if not helper:
+        return RedirectResponse("/login", status_code=303)
+    if helper.email_verified_at is not None:
+        return RedirectResponse("/me", status_code=303)
+
+    helper.email_verification_token = generate_token()
+    db.commit()
+    base = str(request.base_url).rstrip("/")
+    verify_url = f"{base}/verify/{helper.email_verification_token}"
+    if settings.smtp_enabled:
+        try:
+            from ..email_sender import send_verification_email
+            send_verification_email(helper, verify_url)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[resend_verify] SMTP-Fehler: {exc}")
+    else:
+        print(f"[resend_verify] Verifikations-Link für {helper.email}: {verify_url}")
+    return RedirectResponse("/me?verify_resent=1", status_code=303)
+
+
+FIELD_LABELS_DE = {
+    "first_name": "Vorname",
+    "last_name": "Nachname",
+    "email": "Email",
+    "phone": "Telefon",
+    "date_of_birth": "Geburtsdatum",
+    "iban": "IBAN",
+    "paypal": "PayPal",
+    "availability_day_ids": "Verfügbarkeit",
+    "area_preferences": "Wunschbereiche",
+    "is_adult_confirmed": "Volljährigkeit",
+    "accepted_no_guarantee": "Hinweise",
+    "password": "Passwort",
+    "password_confirm": "Passwort-Wiederholung",
+    "payment": "Pfand-Auszahlung",
+}
+
+
+def _humanize_errors(exc: ValidationError) -> dict[str, str]:
+    """Wandelt Pydantic-Validierungsfehler in deutschsprachige, feldspezifische
+    Meldungen um. Gibt ein Dict {field_name: message} zurück."""
+    out: dict[str, str] = {}
+    for err in exc.errors():
+        loc = err.get("loc") or ("",)
+        field = loc[0] if loc else ""
+        label = FIELD_LABELS_DE.get(str(field), str(field))
+        msg = err.get("msg") or ""
+        err_type = err.get("type") or ""
+
+        # Pydantic-Standardfehler ins Deutsche übersetzen.
+        if err_type == "missing":
+            human = f"{label}: Pflichtfeld."
+        elif err_type.startswith("string_too_short") or err_type == "value_error.any_str.min_length":
+            human = f"{label}: Eingabe ist zu kurz."
+        elif "email" in err_type or "@-sign" in msg or "valid email" in msg:
+            human = f"{label}: Bitte gib eine gültige Email-Adresse ein."
+        elif err_type in ("date_parsing", "date_from_datetime_parsing", "date_type") or "valid date" in msg:
+            human = f"{label}: Bitte gib ein gültiges Datum ein."
+        elif err_type == "value_error":
+            # @field_validator-Meldungen sind schon deutsch — nur 'Value error, ' davorschneiden.
+            human = msg
+            for prefix in ("Value error, ", "value_error, ", "Value error: "):
+                if human.startswith(prefix):
+                    human = human[len(prefix):]
+                    break
+            human = f"{label}: {human}" if not human.startswith(label) else human
+        else:
+            # Fallback: roher Pydantic-Text mit Label voranstellen
+            human = f"{label}: {msg}"
+
+        # Erste Meldung pro Feld gewinnt (kürzer + prägnanter)
+        out.setdefault(str(field), human)
+    return out
 
 
 def _render_form_with_errors(request: Request, db: Session, errors: dict, raw: dict):

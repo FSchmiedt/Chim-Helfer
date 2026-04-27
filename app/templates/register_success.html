@@ -11,11 +11,27 @@
   <p class="text-slate-700 mb-4">
     Deine Anmeldung ist bei uns eingegangen.
   </p>
-  <p class="text-sm text-slate-500">
-    Wir melden uns per Email ({{ helper.email }}), sobald der genaue Helfer:innen-Bedarf feststeht.
+
+  <div class="mt-6 p-4 rounded-lg bg-amber-50 border border-amber-200 text-left max-w-md mx-auto">
+    <p class="font-semibold text-amber-900 mb-1">📧 Bitte bestätige jetzt deine Email</p>
+    <p class="text-sm text-amber-900/80">
+      Wir haben dir gerade eine Mail an <strong>{{ helper.email }}</strong> geschickt.
+      Klick auf den Link darin, um deine Adresse zu bestätigen. Sonst können wir dich nicht erreichen.
+      Schau auch im Spam-Ordner nach.
+    </p>
+    {% if manual_verify_link %}
+    <div class="mt-3 p-2 bg-white border border-amber-300 rounded text-xs">
+      <p class="font-mono break-all">{{ manual_verify_link }}</p>
+      <p class="text-slate-500 mt-1">(Dev-Modus: Link wird angezeigt, weil DEBUG_SHOW_RESET_LINK aktiv ist.)</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <p class="text-sm text-slate-500 mt-6">
+    Wir melden uns, sobald der genaue Helfer:innen-Bedarf feststeht.
   </p>
-  <p class="text-sm text-slate-500 mt-4">
-    Bei Fragen oder Änderungen: einfach Email ans Helfer-Team.
+  <p class="text-sm text-slate-500 mt-2">
+    <a href="/me" class="text-primary-600 hover:underline">→ zu deinem Helfer-Bereich</a>
   </p>
 </div>
 {% endblock %}

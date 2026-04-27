@@ -5,8 +5,8 @@ services:
     name: chimaera-helfer-tool
     runtime: docker
     plan: free
-    autoDeploy: true
     region: frankfurt
+    autoDeploy: true
     envVars:
       # --- DB: Connection String aus Neon / anderem Provider ---
       - key: DATABASE_URL

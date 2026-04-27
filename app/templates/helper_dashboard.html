@@ -12,6 +12,29 @@
   </div>
 </div>
 
+{% if not helper.email_verified_at %}
+<div class="mb-6 p-4 rounded-lg bg-amber-50 border border-amber-300">
+  <div class="flex items-start gap-3">
+    <div class="text-2xl flex-shrink-0">📧</div>
+    <div class="flex-1">
+      <p class="font-semibold text-amber-900">Email noch nicht bestätigt</p>
+      <p class="text-sm text-amber-900/80 mt-1">
+        Wir haben dir bei der Anmeldung eine Mail an <strong>{{ helper.email }}</strong> geschickt.
+        Klick auf den Link darin. Falls du sie nicht bekommen hast, prüf den Spam-Ordner oder fordere einen neuen Link an.
+      </p>
+      <form method="post" action="/me/resend-verify" class="mt-3 inline">
+        <button class="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded">
+          Verifikations-Mail erneut senden
+        </button>
+      </form>
+      {% if request.query_params.get('verify_resent') %}
+      <p class="text-xs text-emerald-700 mt-2">✓ Verifikations-Mail wurde erneut verschickt.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- Flash / Query-Params (simple Hinweise) -->
 {% set p = request.query_params %}
 {% if p.get('swap_sent') %}

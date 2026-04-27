@@ -74,6 +74,10 @@ class Helper(Base):
     password_reset_token: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
     password_reset_expires: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+    # Email-Verifikation
+    email_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    email_verification_token: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+
     # Zahlungsdaten für Pfand etc.
     iban: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     paypal: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)

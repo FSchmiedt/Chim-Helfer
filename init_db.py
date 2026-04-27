@@ -21,12 +21,14 @@ from app import models
 
 
 DEFAULT_AREAS = [
-    ("Bar", "Ausschank, Thekenbetrieb, Gästebetreuung", ["Barleitung", "Springer", "Tresenkraft", "Runner"]),
-    ("Einlass", "Ticketkontrolle, Bändchenausgabe", ["Schichtleitung Einlass", "Ticketscan", "Bändchen"]),
-    ("Aufbau", "Aufbau vor dem Festival", ["Crewchef Aufbau", "Aufbauhelfer:in"]),
-    ("Abbau", "Abbau nach dem Festival", ["Crewchef Abbau", "Abbauhelfer:in"]),
-    ("Infopoint", "Awareness, Info, Lost & Found", ["Schichtleitung Info", "Infopoint-Kraft"]),
-    ("Crew Catering", "Crewverpflegung, Backstage", ["Küchenleitung", "Küchenhilfe"]),
+    ("Verkehr", "", []),
+    ("Einlass", "", ["Schichtleitung Einlass", "Ticketscan", "Bändchen"]),
+    ("Cleaning", "", []),
+    ("Bar", "", ["Barleitung", "Springer", "Tresenkraft", "Runner"]),
+    ("Crew Catering", "", ["Küchenleitung", "Küchenhilfe"]),
+    ("Driver", "", []),
+    ("Abbau", "", ["Crewchef Abbau", "Abbauhelfer:in"]),
+    ("Awareness", "", []),
 ]
 
 
@@ -37,6 +39,8 @@ NEW_COLUMNS_BY_TABLE = {
         ("password_hash", "VARCHAR(255)"),
         ("password_reset_token", "VARCHAR(100)"),
         ("password_reset_expires", "TIMESTAMP"),
+        ("email_verified_at", "TIMESTAMP"),
+        ("email_verification_token", "VARCHAR(100)"),
         # Booleans ohne DEFAULT-Klausel, weil SQLite und Postgres sich hier
         # unterschiedlich verhalten. Wir backfillen weiter unten.
         ("pfand_paid", "BOOLEAN"),
@@ -93,23 +97,47 @@ def seed_areas_and_roles(db):
 
 
 def seed_example_days(db):
-    """Beispiel-Festivaltage (Do-So in ca. 3 Monaten)."""
+    """Beispiel-Festivaltage Fr/Sa/So in ca. 3 Monaten."""
     if db.query(models.FestivalDay).count() > 0:
         return
     start = date.today() + timedelta(days=90)
-    # Nächster Donnerstag
-    while start.weekday() != 3:  # 3 = Donnerstag
+    # Nächster Freitag
+    while start.weekday() != 4:  # 4 = Freitag
         start += timedelta(days=1)
-    labels = ["Donnerstag (Aufbau)", "Freitag", "Samstag", "Sonntag (Abbau)"]
+    labels = ["Freitag", "Samstag", "Sonntag"]
     for i, lbl in enumerate(labels):
         db.add(models.FestivalDay(date=start + timedelta(days=i), label=lbl, sort_order=i))
     db.commit()
 
 
+def reseed_areas(db):
+    """⚠️ Löscht alle Bereiche + Rollen und seedet die DEFAULT_AREAS neu.
+
+    Cascade entfernt damit auch alle bestehenden HelperAreaPreference-Einträge,
+    HelperRoleTrust-Einträge und Shifts. Das ist heftig — nur verwenden,
+    bevor sich Helfer:innen angemeldet haben oder du die Konsequenzen kennst.
+    """
+    db.query(models.Area).delete()
+    db.commit()
+    seed_areas_and_roles(db)
+
+
+def reseed_days(db):
+    """⚠️ Löscht alle Festivaltage + zugehörige Verfügbarkeiten + Schichten und
+    seedet die Beispieltage Fr/Sa/So neu. Wie bei reseed_areas: heftiger Eingriff."""
+    db.query(models.FestivalDay).delete()
+    db.commit()
+    seed_example_days(db)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--reset", action="store_true", help="Alle Tabellen löschen und neu anlegen")
-    parser.add_argument("--with-days", action="store_true", help="Beispiel-Festivaltage anlegen")
+    parser.add_argument("--with-days", action="store_true", help="Beispiel-Festivaltage Fr/Sa/So anlegen")
+    parser.add_argument("--reseed-areas", action="store_true",
+                        help="⚠️ Bereiche+Rollen löschen und die aktuellen Defaults neu anlegen")
+    parser.add_argument("--reseed-days", action="store_true",
+                        help="⚠️ Festivaltage löschen und Fr/Sa/So neu anlegen")
     args = parser.parse_args()
 
     if args.reset:
@@ -124,15 +152,23 @@ def main():
 
     db = SessionLocal()
     try:
-        seed_areas_and_roles(db)
-        print("✓ Default-Bereiche + Rollen geseedet (übersprungen falls vorhanden)")
+        if args.reseed_areas:
+            reseed_areas(db)
+            print("✓ Bereiche+Rollen RE-SEEDED")
+        else:
+            seed_areas_and_roles(db)
+            print("✓ Default-Bereiche + Rollen geseedet (übersprungen falls vorhanden)")
 
-        if args.with_days:
+        if args.reseed_days:
+            reseed_days(db)
+            print("✓ Festivaltage RE-SEEDED auf Fr/Sa/So")
+        elif args.with_days:
             seed_example_days(db)
-            print("✓ Beispiel-Festivaltage angelegt")
+            print("✓ Beispiel-Festivaltage Fr/Sa/So angelegt")
 
         count = db.query(models.Area).count()
-        print(f"ℹ️  {count} Bereiche in der DB")
+        days_count = db.query(models.FestivalDay).count()
+        print(f"ℹ️  {count} Bereiche und {days_count} Festivaltage in der DB")
     finally:
         db.close()
 

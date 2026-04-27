@@ -9,9 +9,14 @@ in Produktion.
 
 **Für Helfer:innen (öffentlich unter `/`):**
 - Anmeldung mit Name, Kontakt, Geburtsdatum (Volljährigkeits-Check),
-  Tag-Verfügbarkeit, Wunschbereichen mit Ranking (1. Wahl, 2. Wahl, …),
-  IBAN/PayPal für Pfand, Passwort.
-- Eigener Login-Bereich `/me`: Schichten einsehen, Passwort ändern.
+  Tag-Verfügbarkeit, Wunschbereichen mit Ranking (1. Wahl … 5 = egal/Default),
+  IBAN **oder** PayPal für Pfand-Auszahlung (Pflicht — eines von beidem),
+  Passwort.
+- **Email-Verifikation** nach Anmeldung: Mail mit Bestätigungs-Link wird
+  rausgeschickt. Login funktioniert auch ohne Verifikation, aber im
+  `/me`-Bereich erscheint ein Banner und Admin sieht den Status.
+- Eigener Login-Bereich `/me`: Schichten einsehen, Passwort ändern,
+  Verifikations-Mail erneut anfordern.
 - **Schichttausch:**
   - Schicht aufs Tausch-Board stellen → andere Helfer:innen können direkt
     übernehmen. Das Anbieten ist die Zustimmung; das Übernehmen auch.
@@ -24,11 +29,10 @@ in Produktion.
 - **Dashboard:** Gesamtzahl, unverplant, offene Slots, Tages-/Bereichs-
   verteilung, Pfand-Status (klickbar zur vorgefilterten Liste).
 - **Helfer:innen-Liste:** filtern nach Tag, Bereich, Status, Erfahrung,
-  **Pfand-Status**, Volltext über Name/Email.
+  **Pfand-Status, Email-Verifikation**, Volltext über Name/Email.
 - **Helfer-Detail:** alle Felder editierbar in Panels, die unabhängig
   gespeichert werden (Stammdaten / Verfügbarkeit+Wünsche / Admin-Bereich /
-  Pfand). Jedes Panel hat seinen eigenen Speichern-Button — kein
-  versehentliches Überschreiben.
+  Pfand). Kein versehentliches Überschreiben.
 - **Rollen-Zutrauen** pro Helfer:in pro Bereich — Schichtplanung zeigt das
   als Hinweis (z.B. Bar → Barleitung, Springer, Tresenkraft, Runner).
 - **Schichten:** anlegen (Bereich, Tag, Zeit, Kapazität), Kandidat:innen
@@ -37,9 +41,8 @@ in Produktion.
   mit automatischen Timestamps. Beim Wegnehmen von „bezahlt" wird
   „zurückgegeben" automatisch mit entfernt. Filter + Dashboard-Kennzahlen.
 - **Stammdaten:** Festivaltage, Einsatzbereiche, Rollen.
-- **Mail-Verteiler:** filtern, Empfängerliste kopieren (BCC im eigenen
-  Mailprogramm) oder via SMTP versenden. Platzhalter: `{{Vorname}}`,
-  `{{Nachname}}`, `{{FestivalName}}`.
+- **Mail-Verteiler:** filtern, Empfängerliste kopieren (BCC) oder via SMTP
+  versenden. Platzhalter: `{{Vorname}}`, `{{Nachname}}`, `{{FestivalName}}`.
 - **CSV-Import/-Export** inkl. Pfand-Spalten.
 - **Passwort-Reset-Link erzeugen** für einzelne Helfer:innen (Fallback ohne
   SMTP oder wenn Email nicht ankommt).
@@ -59,6 +62,27 @@ ausser dass du nach ihnen filtern und gezielt Mails schreiben kannst.
 Diese Personen tauchen weiterhin in der Kandidat:innen-Liste bei Schichten
 auf — wenn du das nicht willst, einfach sagen, das ist eine Zeile Code.
 
+## Validierung der Anmeldung
+
+Das Anmeldeformular validiert serverseitig (in `app/routers/public.py`):
+
+- **Vorname/Nachname:** Pflichtfeld, leerer String wird abgelehnt
+- **Email:** Pflichtfeld, RFC-konform, eindeutig (Duplikat erzeugt Hinweis)
+- **Geburtsdatum:** Pflichtfeld, mindestens 18 Jahre (rechnet das Alter
+  selbst aus — der Volljährigkeits-Check passiert nicht nur über die
+  Checkbox, die ist eine zusätzliche Bestätigung)
+- **Verfügbarkeit:** mindestens ein Tag muss angekreuzt sein
+- **Wunschbereiche:** alle Bereiche aus der DB werden gespeichert; Felder,
+  die leer gelassen werden, bekommen automatisch Prio 5 (= "egal/Default")
+- **IBAN oder PayPal:** mindestens eines muss angegeben sein. IBAN wird mit
+  ISO-13616 mod-97-Prüfsumme validiert, PayPal akzeptiert Email-Adresse,
+  `@handle`-Format oder `paypal.me/<name>`-Link
+- **Passwort:** mindestens 8 Zeichen, muss zweimal identisch eingegeben
+  werden
+
+Fehlermeldungen sind auf Deutsch und nennen das betroffene Feld
+(`_humanize_errors` in `public.py`).
+
 ## Lokales Setup
 
 Voraussetzung: Python 3.10+ (getestet mit 3.12).
@@ -75,7 +99,7 @@ pip install -r requirements.txt
 cp .env.example .env
 # → mindestens ADMIN_PASSWORD und SECRET_KEY ändern.
 
-# 4. DB initialisieren (inkl. Beispiel-Festivaltagen)
+# 4. DB initialisieren (inkl. Beispiel-Festivaltagen Fr/Sa/So)
 python init_db.py --with-days
 
 # 5. Server starten
@@ -88,21 +112,26 @@ uvicorn app.main:app --reload --port 8000
 
 Alternativ `./run.sh`, das Schritte 1–5 in einem macht.
 
-Für lokale UI-Tests des Passwort-vergessen-Flows ohne SMTP: in der `.env`
-`DEBUG_SHOW_RESET_LINK=true` setzen — dann erscheint der Reset-Link direkt
-auf der Seite. **In Produktion auf `false` lassen.**
+Für lokale UI-Tests des Passwort-vergessen- und des Email-Verifikations-Flows
+ohne SMTP: in der `.env` `DEBUG_SHOW_RESET_LINK=true` setzen — dann erscheint
+der Link direkt auf der Seite. **In Produktion auf `false` lassen.**
 
 ### `init_db.py`-Flags
 
 | Flag | Wirkung |
 |---|---|
-| *(keins)* | Tabellen anlegen/aktualisieren, Spalten-Migrationen, Default-Bereiche+Rollen seeden |
-| `--with-days` | zusätzlich 4 Beispiel-Festivaltage (Do–So in ~3 Monaten) |
-| `--reset` | ⚠️ **Alle Tabellen löschen** und neu anlegen |
+| *(keins)* | Tabellen anlegen/aktualisieren, Spalten-Migrationen, Default-Bereiche+Rollen seeden (überspringt, falls schon welche da sind) |
+| `--with-days` | zusätzlich 3 Beispiel-Festivaltage (Fr/Sa/So in ~3 Monaten) |
+| `--reseed-areas` | ⚠️ **Bereiche+Rollen löschen** und die aktuellen Defaults neu anlegen (cascade entfernt damit Helfer-Wunschbereiche+Rollen-Zutrauen+Schichten der alten Bereiche) |
+| `--reseed-days` | ⚠️ **Festivaltage löschen** und Fr/Sa/So neu anlegen (cascade entfernt Verfügbarkeiten+Schichten) |
+| `--reset` | ⚠️⚠️ **Alle Tabellen löschen** und neu anlegen — nuklear |
 
-Das Script ist idempotent: wiederholtes Aufrufen ist sicher. Neue Spalten
-(`password_hash`, `pfand_paid`, …) werden per `ALTER TABLE ADD COLUMN`
-nachgezogen, inkl. Default-Backfill für Booleans.
+Das Script ist ansonsten idempotent: wiederholtes Aufrufen ist sicher. Neue
+Spalten werden per `ALTER TABLE ADD COLUMN` nachgezogen, inkl. Backfill.
+
+**Migration auf einer Render-Instanz** (wenn dort schon alte Bereiche/Tage
+in der Neon-DB stehen): siehe `DEPLOYMENT.md` Abschnitt „Bereiche/Tage neu
+seeden in Produktion".
 
 ## Projektstruktur
 
@@ -112,13 +141,14 @@ chimaera-helfer-tool/
 │   ├── main.py               FastAPI-Einstieg, mountet alle Router
 │   ├── config.py             Settings aus .env (pydantic-settings)
 │   ├── database.py           SQLAlchemy Engine + Session
-│   ├── models.py             Alle Tabellen (Helper, Shift, SwapOffer, …)
+│   ├── models.py             Alle Tabellen
 │   ├── auth.py               Admin- UND Helfer-Session (signierte Cookies)
-│   ├── passwords.py          PBKDF2-Hashing (stdlib, keine externen Deps)
-│   ├── csv_io.py             CSV-Import/-Export für Helfer-Liste
-│   ├── email_sender.py       SMTP-Versand (Reset, Swap, Mail-Verteiler)
+│   ├── passwords.py          PBKDF2-Hashing (stdlib)
+│   ├── csv_io.py             CSV-Import/-Export
+│   ├── email_sender.py       SMTP-Versand (Reset, Verify, Swap, Verteiler)
 │   └── routers/
-│       ├── public.py         /, /register, /login, /logout, /forgot, /reset
+│       ├── public.py         /, /register, /login, /logout, /forgot,
+│       │                     /reset, /verify/{token}
 │       ├── helper_area.py    /me, /board, Swap-Flows
 │       └── admin_pages.py    /admin/*
 ├── app/templates/            Jinja2
@@ -136,8 +166,7 @@ chimaera-helfer-tool/
 
 **Credentials kommen aus `.env`** (`ADMIN_USERNAME` + `ADMIN_PASSWORD`).
 Es gibt absichtlich kein Admin-User-Management in der Datenbank — für eine
-einzelne verantwortliche Person völlig ausreichend und ein Angriffsvektor
-weniger.
+einzelne verantwortliche Person ausreichend und ein Angriffsvektor weniger.
 
 **⚠️ Vor dem ersten öffentlichen Deploy unbedingt:**
 
@@ -146,78 +175,57 @@ weniger.
    ```bash
    python -c "import secrets; print(secrets.token_urlsafe(48))"
    ```
-   Der Key signiert die Session-Cookies. Wenn er sich ändert, werden alle
-   eingeloggten Sessions ungültig — also nicht unbewusst wechseln.
-3. `DEBUG_SHOW_RESET_LINK=false` setzen (oder weglassen — Default ist
-   `false`).
-
-Logout liegt unter `POST /admin/logout`.
+   Der Key signiert die Session-Cookies. Bei Wechsel werden alle Sessions
+   ungültig — also nicht unbewusst tauschen.
+3. `DEBUG_SHOW_RESET_LINK=false` (Default).
 
 ## Stammdaten pflegen
 
 Unter `/admin/config`:
 
-- **Festivaltage:** Datum + Label (z.B. „Donnerstag (Aufbau)"). Löschen
-  kaskadiert auf alle Verfügbarkeiten und Schichten dieses Tages.
-- **Einsatzbereiche:** Name + optionale Beschreibung. Die Beschreibung
-  taucht im Anmeldeformular auf. Default werden beim ersten `init_db.py`-Lauf
-  Bar / Einlass / Aufbau / Abbau / Infopoint / Crew Catering angelegt, je
-  mit sinnvollen Start-Rollen.
+- **Festivaltage:** Datum + Label. Löschen kaskadiert auf alle
+  Verfügbarkeiten und Schichten dieses Tages.
+- **Einsatzbereiche:** Name + optionale Beschreibung (wird derzeit nicht im
+  öffentlichen Anmeldeformular angezeigt). Default beim ersten
+  `init_db.py`-Lauf: Verkehr / Einlass / Cleaning / Bar / Crew Catering /
+  Driver / Abbau / Awareness.
 - **Rollen:** pro Bereich beliebig viele.
 
 **Empfehlung:** Stammdaten vor dem Öffnen des Anmeldeformulars fixieren.
-Nachträgliche Tage hinzufügen geht, ist aber fair nur, wenn noch keine
-Helfer:innen angemeldet waren — sonst müsstest du sie anschreiben.
 
 ## Schichtplanung + Rollen-Zutrauen
 
-**Typischer Workflow, z.B. für die Bar:**
+**Workflow z.B. für die Bar:**
 
-1. **Stammdaten:** Rollen anlegen (Barleitung, Springer, Tresenkraft,
-   Runner).
-2. **Nach Anmeldeschluss:** je Helfer:in pro Bereich ankreuzen, welche
-   Rollen du ihr zutraust. Auf `/admin/helpers/<id>` im Panel
-   „Admin-Notizen". Handarbeit, aber wichtig — die Schichtplanung sieht
-   sonst jede:n gleich.
-3. **Schichten anlegen:** `/admin/shifts` → „+ Neue Schicht". Bereich, Tag,
-   Start-/Endzeit, Kapazität (gleichzeitige Plätze).
-4. **Zuweisen:** Schicht öffnen → rechts die Kandidat:innen-Liste.
-   Sortiert nach Wunsch-Rang (1. Wahl zuerst), dann Vorname. Bei jeder
-   Person siehst du zugetraute Rollen. Beim Zuweisen wählst du optional
-   eine konkrete Rolle; nicht-zugetraute Rollen sind im Dropdown explizit
-   als „nicht zugetraut" markiert (erlaubt sie aber trotzdem, falls du
-   weißt was du tust).
+1. Stammdaten: Rollen anlegen (Barleitung, Springer, Tresenkraft, Runner).
+2. Nach Anmeldeschluss: pro Helfer:in pro Bereich ankreuzen, welche Rollen
+   du zutraust. Auf `/admin/helpers/<id>` im Panel „Admin-Notizen".
+3. Schichten anlegen: `/admin/shifts` → „+ Neue Schicht".
+4. Zuweisen: Schicht öffnen → Kandidat:innen sortiert nach Wunsch-Rang.
+   Beim Zuweisen wählst du optional eine konkrete Rolle.
 
 **Schichttausch** (läuft ohne Admin, sofern konfliktfrei):
 
-- **Board:** Helfer:in stellt ihre Schicht auf `/board`. Wer sie übernimmt,
-  klickt „Übernehmen". Das System prüft zeitliche Überschneidungen und
-  fügt den Tag ggf. stillschweigend zur Verfügbarkeit der übernehmenden
-  Person hinzu.
-- **Direkter Tausch:** Email einer Freund:in eingeben, optional Nachricht.
-  Die Freund:in bekommt die Anfrage auf `/me` (und per Mail, falls SMTP) und
-  akzeptiert oder lehnt ab. Beim Akzeptieren werden alle anderen offenen
-  Anfragen/Angebote auf diese Schicht automatisch abgebrochen.
+- **Board:** Helfer:in stellt ihre Schicht auf `/board`. Andere übernehmen
+  per Klick. System prüft Zeit-Überschneidungen.
+- **Direkter Tausch:** Email einer Freund:in eingeben. Sie bekommt die
+  Anfrage auf `/me` (und per Mail) und akzeptiert oder lehnt ab.
 
-**Wichtig:** Beim Tausch bleibt die zugewiesene **Rolle** erhalten. Wenn
-die neue Person keine Trust-Markierung für diese Rolle hat, wird das nicht
-blockiert — der Admin kann im Nachgang prüfen und ggf. umplanen.
+Beim Tausch bleibt die zugewiesene **Rolle** erhalten. Wenn die neue Person
+die Rolle nicht zugetraut hat, blockiert das nicht — Admin kann nachschauen.
 
 ## Pfand-Tracking
 
 Im Panel „Pfand" auf `/admin/helpers/<id>`:
 
-- **„Pfand bezahlt"** ankreuzen → Timestamp wird automatisch gesetzt.
-- **„Pfand zurückgegeben"** ankreuzen → weiterer Timestamp.
+- „Pfand bezahlt" ankreuzen → Timestamp gesetzt.
+- „Pfand zurückgegeben" ankreuzen → weiterer Timestamp.
 - „Pfand bezahlt" wieder entfernen → auch „zurückgegeben" geht aus, beide
-  Timestamps werden zurückgesetzt. Konsistenzgedanke: ein nicht bezahltes
-  Pfand kann nicht zurückgegeben sein.
+  Timestamps werden zurückgesetzt.
 
-In der Helfer-Liste erscheint eine Pfand-Spalte (— / bezahlt / ✓ zurück)
-und ein Pfand-Filter. Das Dashboard zeigt zwei Kennzahlen:
-- „bezahlt, noch nicht zurück" (Was du nach dem Festival noch auszahlen
-  musst)
-- „vollständig abgewickelt"
+Helfer-Liste hat eine Pfand-Spalte (— / bezahlt / ✓ zurück) und einen
+Pfand-Filter. Dashboard zeigt zwei Kennzahlen: „bezahlt, noch nicht zurück"
+und „vollständig abgewickelt".
 
 ## CSV-Import / -Export
 
@@ -230,53 +238,47 @@ notes;admin_notes;status;pfand_paid;pfand_paid_at;
 pfand_returned;pfand_returned_at;created_at
 ```
 
-- `date_of_birth`: ISO-Datum (`YYYY-MM-DD`)
+- `date_of_birth`: ISO (`YYYY-MM-DD`)
 - `been_here_before`, `pfand_paid`, `pfand_returned`: `ja` / `nein`
-- `pfand_paid_at`, `pfand_returned_at`: ISO-Timestamp oder leer
-- `availability_days`: Tage getrennt mit `|`, Labels wie in Stammdaten
-  (z.B. `Donnerstag (Aufbau)|Freitag`)
-- `preferred_areas`: mit Rang, Pipe-getrennt (z.B. `1:Bar|2:Einlass`)
-- `notes`, `admin_notes`: Newlines werden zu Leerzeichen
+- `availability_days`: Pipe-getrennt, Labels wie in Stammdaten
+- `preferred_areas`: `1:Bar|2:Einlass|5:Crew Catering`
+- Newlines in Notizen werden zu Leerzeichen
 
-**Import** erwartet dieselben Spalten. Minimum ist `email`, `first_name`,
+**Import** erwartet dieselben Spalten. Minimum: `email`, `first_name`,
 `last_name`, `date_of_birth`. Bestehende Einträge werden per `email`
-abgeglichen und aktualisiert, sonst neu angelegt. Alte CSVs ohne die
-Pfand-Spalten werden weiter akzeptiert — die Felder bleiben einfach leer.
+abgeglichen und aktualisiert. Alte CSVs ohne Pfand-Spalten werden weiter
+akzeptiert.
 
 **Aus dem Import angelegte Helfer:innen haben kein Passwort.** Sie können
-sich via „Passwort vergessen" eins setzen, oder der Admin erzeugt ihnen auf
+sich via „Passwort vergessen" eins setzen, oder Admin erzeugt ihnen auf
 `/admin/helpers/<id>` einen Reset-Link.
 
-## SMTP (optional) konfigurieren
+## SMTP konfigurieren
 
-Wenn `SMTP_HOST`, `SMTP_USER` und `SMTP_PASSWORD` in `.env` gesetzt sind,
-kann das Tool:
-
-- den Mail-Verteiler direkt versenden (mit Platzhalter-Ersetzung)
-- Passwort-Reset-Links automatisch mailen
-- Tausch-Anfragen + -Bestätigungen als Benachrichtigungs-Mails senden
+Wenn `SMTP_HOST`, `SMTP_USER` und `SMTP_PASSWORD` in `.env` gesetzt sind:
+- Mail-Verteiler verschickt direkt
+- **Email-Verifikations-Mail** geht nach Anmeldung automatisch raus
+- Passwort-Reset-Links werden gemailt
+- Tausch-Anfragen + Bestätigungen als Benachrichtigungs-Mails
 
 Ohne SMTP:
-- Mail-Verteiler bietet nur „Empfängerliste kopieren / CSV"
-- Reset-Links werden in die Server-Konsole gedruckt; Admin kann sie
-  zusätzlich manuell über den Detail-Button erzeugen
+- Mail-Verteiler bietet nur Copy/CSV
+- Reset- und Verifikations-Links werden in die Server-Konsole gedruckt;
+  Admin kann Reset-Links manuell über den Detail-Button erzeugen
 - Swap-Benachrichtigungen passieren nur in-app
 
-**Gmail / Google Workspace als Absender:** App-Passwort nötig (nicht das
-Account-Passwort), `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`,
-`SMTP_USE_TLS=true`.
-
-Für kleine Vereine ist ein transaktionaler Dienst wie Mailgun, Postmark,
-Brevo oder auch der hauseigene Mailserver empfehlenswert — alle haben
-Free Tiers, die ein paar hundert Mails/Monat problemlos abdecken.
+**Gmail / Google Workspace:** App-Passwort nötig (siehe
+<https://myaccount.google.com/apppasswords>), `SMTP_HOST=smtp.gmail.com`,
+`SMTP_PORT=587`, `SMTP_USE_TLS=true`. Für andere Provider sieh in deren
+SMTP-Doku nach.
 
 ## Smoke-Tests
 
-`smoke_test.py` startet einen eigenen uvicorn auf Port 8766 und klappert 75
-Checks durch (öffentliche Anmeldung inkl. Validierung, Admin-Flows inkl.
-aller Edit-Sections und Pfand-Logik, Filter-Regressionen, Helfer-Auth mit
-Reset, Tausch-Board, direkter Tausch). Separate DB `chimaera_smoke.db` —
-deine Produktions-DB wird nicht beeinflusst.
+`smoke_test.py` startet einen eigenen uvicorn auf Port 8766 und klappert 76
+Checks ab (öffentliche Anmeldung inkl. aller Validierungen, Admin-Flows
+inkl. aller Edit-Sections und Pfand-Logik, Filter-Regressionen, Helfer-Auth
+mit Reset, Tausch-Board, direkter Tausch). Separate DB
+`chimaera_smoke.db` — deine Produktions-DB wird nicht beeinflusst.
 
 ```bash
 . .venv/bin/activate
@@ -287,8 +289,8 @@ python smoke_test.py
 ## Deployment
 
 Siehe `DEPLOYMENT.md` für Schritt-für-Schritt-Anleitung zu Render.com +
-Neon Postgres (beide kostenlos für diesen Anwendungsfall) sowie
-Alternativen (Railway, Fly.io) und eine Produktions-Checkliste.
+Neon Postgres (beide kostenlos), Migrations-Hinweise für bestehende
+Render-Instanzen und Alternativen (Railway, Fly.io).
 
 ## Lizenz + Kontext
 

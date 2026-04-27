@@ -14,6 +14,11 @@
       {% if not helper.password_hash %}
         · <span class="text-amber-700">kein Passwort gesetzt</span>
       {% endif %}
+      {% if helper.email_verified_at %}
+        · <span class="text-emerald-700">✓ Email verifiziert</span>
+      {% else %}
+        · <span class="text-amber-700">Email nicht verifiziert</span>
+      {% endif %}
     </p>
   </div>
   <form method="post" action="/admin/helpers/{{ helper.id }}/delete"

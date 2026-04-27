@@ -100,6 +100,7 @@ def main() -> int:
             ("email", "anna@example.org"),
             ("phone", "0123456789"),
             ("date_of_birth", "1995-06-15"),
+            ("iban", "DE89 3704 0044 0532 0130 00"),
             ("been_here_before", "no"),
             ("is_adult_confirmed", "on"),
             ("accepted_no_guarantee", "on"),
@@ -129,16 +130,25 @@ def main() -> int:
         check("POST /register (too young)", r.status_code == 400 and "18" in r.text,
               f"status={r.status_code}")
 
-        # POST /register ohne Bereiche
-        no_area_data = [
+        # POST /register ohne IBAN UND ohne PayPal
+        no_payment_data = [
             ("first_name", "Max"), ("last_name", "Test"),
             ("email", "max@example.org"), ("date_of_birth", "1990-01-01"),
             ("been_here_before", "no"),
             ("is_adult_confirmed", "on"), ("accepted_no_guarantee", "on"),
             ("availability_day_ids", str(day_ids[0])),
+            ("password", "test-pw-1234"), ("password_confirm", "test-pw-1234"),
         ]
-        r = post_form(client, "/register", no_area_data)
-        check("POST /register (no area pref)", r.status_code == 400 and "Wunschbereich" in r.text)
+        r = post_form(client, "/register", no_payment_data)
+        check("POST /register (no IBAN / no PayPal)", r.status_code == 400 and "IBAN oder dein PayPal" in r.text)
+
+        # IBAN-Format-Check
+        bad_iban_data = [(k, v) for (k, v) in good_data if k != "email"]
+        bad_iban_data.append(("email", "badiban@example.org"))
+        bad_iban_data = [(k, v) for (k, v) in bad_iban_data if k != "iban"]
+        bad_iban_data.append(("iban", "DE00000000000000000000"))  # falsche Prüfziffer
+        r = post_form(client, "/register", bad_iban_data)
+        check("POST /register (bad IBAN checksum)", r.status_code == 400 and "IBAN" in r.text)
 
         # POST /register ohne Tag
         no_day_data = list(good_data)
@@ -273,8 +283,16 @@ def main() -> int:
             n_prefs = conn.execute(sa_text(
                 "SELECT COUNT(*) FROM helper_area_preferences WHERE helper_id=:i"
             ), {"i": helper_id}).scalar()
-        check("  all 4 days available", n_avail == 4, f"got {n_avail}")
-        check("  exactly 1 pref left", n_prefs == 1, f"got {n_prefs}")
+            total_days = conn.execute(sa_text("SELECT COUNT(*) FROM festival_days")).scalar()
+        check(f"  all days available ({total_days} total)", n_avail == total_days, f"got {n_avail}")
+        # n_prefs zählt nur Bereiche mit explizitem Rang 1 (oder hier 1).
+        # Da unser save() aber mit "leer = 5" alle Bereiche speichert, prüfen wir
+        # einfach nur, dass der Eintrag mit Rang 1 da ist:
+        with eng.connect() as conn:
+            top_pref = conn.execute(sa_text(
+                "SELECT area_id FROM helper_area_preferences WHERE helper_id=:i AND rank=1"
+            ), {"i": helper_id}).scalar()
+        check("  rank-1 pref persisted", top_pref == area_ids[1], f"got area_id={top_pref}")
 
         # Save mit section=pfand
         r = post_form(client, f"/admin/helpers/{helper_id}/save", [
@@ -353,6 +371,7 @@ def main() -> int:
             ("first_name", "Ben"), ("last_name", "Tester"),
             ("email", "ben@example.org"),
             ("date_of_birth", "1992-03-10"),
+            ("paypal", "ben@paypal.example"),
             ("been_here_before", "no"),
             ("is_adult_confirmed", "on"), ("accepted_no_guarantee", "on"),
             ("password", "ben-password-1"),
