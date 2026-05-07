@@ -21,6 +21,10 @@ services:
       # --- Festival ---
       - key: FESTIVAL_NAME
         value: Chimaera Festival
+      - key: REGISTRATION_OPEN
+        value: "true"  # auf "false" setzen, um Anmeldungen zu schließen
+      - key: REGISTRATION_CLOSED_MESSAGE
+        sync: false  # optional, leer für Default-Text
       - key: MIN_SHIFTS
         value: "2"
       - key: MIN_DAYS

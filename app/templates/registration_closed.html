@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="bg-white rounded-lg shadow-sm border border-slate-200 p-8 text-center max-w-xl mx-auto">
+  <div class="mx-auto w-16 h-16 rounded-full bg-cream-200 flex items-center justify-center mb-5">
+    <svg class="w-8 h-8 text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M5 13l4 4L19 7" />
+    </svg>
+  </div>
+  <h2 class="text-2xl font-semibold mb-3">Anmeldungen geschlossen</h2>
+
+  {% if custom_message %}
+    <p class="text-slate-700 whitespace-pre-line">{{ custom_message }}</p>
+  {% else %}
+    <p class="text-slate-700">
+      Vielen Dank an alle, die sich als Helfer:innen angemeldet haben! 🎉
+    </p>
+    <p class="text-slate-600 mt-3 text-sm">
+      Die Anmeldephase ist beendet — wir können keine weiteren Anmeldungen
+      mehr annehmen. Wer sich bereits angemeldet hat, hört von uns per Mail.
+    </p>
+  {% endif %}
+
+  <div class="mt-6 pt-5 border-t border-slate-100 text-sm text-slate-600">
+    Schon angemeldet?
+    <a href="/login" class="text-primary-600 hover:underline font-medium">In deinen Helfer-Bereich einloggen →</a>
+  </div>
+</div>
+{% endblock %}

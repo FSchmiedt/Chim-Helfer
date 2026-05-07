@@ -174,6 +174,15 @@ def _is_valid_paypal(value: str) -> bool:
 # ---------------------------------------------------------------------------
 @router.get("/", response_class=HTMLResponse)
 def register_form(request: Request, db: Session = Depends(get_db)):
+    if not settings.REGISTRATION_OPEN:
+        return templates.TemplateResponse(
+            "registration_closed.html",
+            {
+                "request": request,
+                "festival_name": settings.FESTIVAL_NAME,
+                "custom_message": settings.REGISTRATION_CLOSED_MESSAGE or None,
+            },
+        )
     days = db.query(models.FestivalDay).order_by(models.FestivalDay.sort_order, models.FestivalDay.date).all()
     areas = db.query(models.Area).order_by(models.Area.sort_order, models.Area.name).all()
     return templates.TemplateResponse(
@@ -199,6 +208,16 @@ def register_form(request: Request, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 @router.post("/register", response_class=HTMLResponse)
 async def register_submit(request: Request, db: Session = Depends(get_db)):
+    if not settings.REGISTRATION_OPEN:
+        return templates.TemplateResponse(
+            "registration_closed.html",
+            {
+                "request": request,
+                "festival_name": settings.FESTIVAL_NAME,
+                "custom_message": settings.REGISTRATION_CLOSED_MESSAGE or None,
+            },
+            status_code=403,
+        )
     form = await request.form()
 
     # Listen + Dicts aus Form-Daten extrahieren

@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     # Festival
     FESTIVAL_NAME: str = "Chimaera Festival"
 
+    # Anmeldungen offen? Auf false stellen, um das öffentliche Anmeldeformular
+    # zu deaktivieren (Banner statt Formular). Login, /me, Schichttausch und
+    # Admin bleiben weiter erreichbar.
+    REGISTRATION_OPEN: bool = True
+    # Optionale eigene Nachricht im "Anmeldungen geschlossen"-Banner.
+    # Leer = Default-Text.
+    REGISTRATION_CLOSED_MESSAGE: str = ""
+
     # Anforderungen (nur Anzeige)
     MIN_SHIFTS: int = 2
     MIN_DAYS: int = 2
