@@ -438,7 +438,59 @@ def helper_reset_link(helper_id: int, request: Request, db: Session = Depends(ge
     return _redirect_to_helper_detail_with_link(request, db, helper, reset_url)
 
 
-def _redirect_to_helper_detail_with_link(request, db, helper, reset_url: str):
+@router.post("/helpers/{helper_id}/resend-verify", response_class=HTMLResponse)
+def helper_resend_verify(helper_id: int, request: Request, db: Session = Depends(get_db)):
+    """Admin schickt die Email-Verifikations-Mail erneut. Eine Kopie geht an die
+    konfigurierte Absender-Adresse (helfen@...), damit das Helfer-Team mitliest."""
+    from datetime import datetime
+    from ..passwords import generate_token
+
+    if (r := require_admin_redirect(request)):
+        return r
+    helper = db.get(models.Helper, helper_id)
+    if not helper:
+        return HTMLResponse("Nicht gefunden", status_code=404)
+
+    if helper.email_verified_at is not None:
+        # Schon verifiziert — kein neuer Token, aber freundlich Bescheid geben.
+        return _redirect_to_helper_detail_with_link(
+            request, db, helper,
+            flash="info: Email ist bereits verifiziert — keine Mail verschickt.",
+        )
+
+    # Frischen Token erzeugen und speichern (alter wird damit ungültig)
+    helper.email_verification_token = generate_token()
+    db.commit()
+
+    base = str(request.base_url).rstrip("/")
+    verify_url = f"{base}/verify/{helper.email_verification_token}"
+
+    # Cc auf die Festival-Adresse, falls SMTP-Absender konfiguriert ist.
+    cc_address = settings.SMTP_FROM_ADDRESS or None
+
+    flash: str
+    if settings.smtp_enabled:
+        try:
+            from ..email_sender import send_verification_email
+            send_verification_email(helper, verify_url, cc=cc_address)
+            cc_note = f" (Kopie an {cc_address})" if cc_address else ""
+            flash = f"success: Verifikations-Mail an {helper.email} verschickt{cc_note}."
+        except Exception as exc:  # noqa: BLE001
+            print(f"[admin resend_verify] SMTP-Fehler: {exc}")
+            flash = (f"error: SMTP-Fehler beim Versand: {exc}. "
+                     f"Du kannst den Link manuell weitergeben: {verify_url}")
+    else:
+        # Ohne SMTP geben wir den Link direkt zurück, dann kann Admin ihn
+        # über einen anderen Kanal verschicken.
+        print(f"[admin resend_verify] Verifikations-Link für {helper.email}: {verify_url}")
+        flash = (f"info: SMTP nicht konfiguriert – Mail wurde NICHT verschickt. "
+                 f"Link manuell weitergeben: {verify_url}")
+
+    return _redirect_to_helper_detail_with_link(request, db, helper, flash=flash)
+
+
+def _redirect_to_helper_detail_with_link(request, db, helper, reset_url: str | None = None,
+                                         flash: str | None = None):
     days = db.query(models.FestivalDay).order_by(models.FestivalDay.sort_order, models.FestivalDay.date).all()
     areas = db.query(models.Area).order_by(models.Area.sort_order, models.Area.name).all()
     all_roles = db.query(models.Role).join(models.Area).order_by(models.Area.sort_order, models.Role.sort_order).all()
@@ -464,6 +516,7 @@ def _redirect_to_helper_detail_with_link(request, db, helper, reset_url: str):
             all_roles=all_roles, grouped_roles=grouped_roles,
             trust_ids=trust_ids, pref_areas=pref_areas,
             assignments=assignments, reset_url=reset_url,
+            admin_flash=flash,
         ),
     )
 

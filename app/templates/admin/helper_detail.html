@@ -27,6 +27,17 @@
   </form>
 </div>
 
+{% if admin_flash is defined and admin_flash %}
+{% set kind = admin_flash.split(':', 1)[0] if ':' in admin_flash else 'info' %}
+{% set body = admin_flash.split(':', 1)[1].strip() if ':' in admin_flash else admin_flash %}
+<div class="mb-6 p-4 rounded-md text-sm
+            {% if kind == 'success' %}bg-emerald-50 border border-emerald-300 text-emerald-900
+            {% elif kind == 'error' %}bg-red-50 border border-red-300 text-red-900
+            {% else %}bg-sky-50 border border-sky-300 text-sky-900{% endif %}">
+  {{ body }}
+</div>
+{% endif %}
+
 {% if reset_url is defined and reset_url %}
 <div class="mb-6 p-4 rounded-md bg-amber-50 border border-amber-300">
   <p class="font-semibold text-amber-900 text-sm mb-2">Neuer Reset-Link (24h gültig):</p>
@@ -43,20 +54,35 @@
 </div>
 {% endif %}
 
+<!-- Admin-Aktionen außerhalb der Edit-Forms (nested forms sind ungültig) -->
+<div class="mb-6 flex flex-wrap items-center gap-2 text-xs">
+  <form method="post" action="/admin/helpers/{{ helper.id }}/reset-link"
+        onsubmit="return confirm('Neuen Reset-Link erzeugen? Der alte wird ungültig.');"
+        class="inline">
+    <button class="px-3 py-1.5 bg-white border border-slate-300 rounded hover:bg-slate-50">
+      🔑 Passwort-Reset-Link erzeugen
+    </button>
+  </form>
+  {% if not helper.email_verified_at %}
+  <form method="post" action="/admin/helpers/{{ helper.id }}/resend-verify"
+        onsubmit="return confirm('Verifikations-Mail an {{ helper.email }} schicken (mit Kopie an unsere Festival-Adresse)?');"
+        class="inline">
+    <button class="px-3 py-1.5 bg-white border border-amber-300 text-amber-800 rounded hover:bg-amber-50">
+      📧 Email-Verifikation erneut senden
+    </button>
+  </form>
+  {% else %}
+  <span class="px-3 py-1.5 text-slate-400">📧 Email bereits verifiziert</span>
+  {% endif %}
+</div>
+
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
   <!-- Stammdaten (editierbar) -->
   <form method="post" action="/admin/helpers/{{ helper.id }}/save"
         class="bg-white border border-slate-200 rounded-lg p-5 lg:col-span-2">
     <input type="hidden" name="section" value="contact" />
-    <div class="flex items-start justify-between mb-3">
-      <h2 class="font-semibold">Angaben</h2>
-      <form method="post" action="/admin/helpers/{{ helper.id }}/reset-link"
-            onsubmit="return confirm('Neuen Reset-Link erzeugen? Der alte wird ungültig.');"
-            class="inline">
-        <button class="text-xs text-slate-600 hover:text-indigo-600 underline" formaction="/admin/helpers/{{ helper.id }}/reset-link">Passwort-Reset-Link erzeugen</button>
-      </form>
-    </div>
+    <h2 class="font-semibold mb-3">Angaben</h2>
 
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
       <div>

@@ -106,16 +106,27 @@ def send_personalized(helpers_and_bodies: Iterable[tuple[str, str, str]], subjec
 # ---------------------------------------------------------------------------
 # Transaktionale Benachrichtigungen (Reset / Swap)
 # ---------------------------------------------------------------------------
-def _send_single(to_email: str, to_name: str, subject: str, body: str) -> None:
-    """Interner Helfer: eine Mail senden. Wirft MailError bei Problemen."""
+def _send_single(to_email: str, to_name: str, subject: str, body: str,
+                 cc: str | None = None) -> None:
+    """Interner Helfer: eine Mail senden. Wirft MailError bei Problemen.
+
+    Wenn `cc` gesetzt ist, geht eine zusätzliche Kopie an diese Adresse
+    (sichtbar im Cc-Header).
+    """
     if not settings.smtp_enabled:
         raise MailError("SMTP nicht konfiguriert.")
     sender = formataddr((settings.SMTP_FROM_NAME, settings.SMTP_FROM_ADDRESS))
     msg = MIMEMultipart()
     msg["From"] = sender
     msg["To"] = formataddr((to_name, to_email))
+    if cc:
+        msg["Cc"] = cc
     msg["Subject"] = subject
     msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    recipients = [to_email]
+    if cc and cc.lower() != to_email.lower():
+        recipients.append(cc)
 
     try:
         if settings.SMTP_USE_TLS:
@@ -124,7 +135,7 @@ def _send_single(to_email: str, to_name: str, subject: str, body: str) -> None:
         else:
             server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30)
         server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-        server.sendmail(settings.SMTP_FROM_ADDRESS, [to_email], msg.as_string())
+        server.sendmail(settings.SMTP_FROM_ADDRESS, recipients, msg.as_string())
         server.quit()
     except Exception as exc:  # noqa: BLE001
         raise MailError(f"SMTP-Fehler: {exc}") from exc
@@ -143,7 +154,8 @@ def send_password_reset_email(helper, reset_url: str) -> None:
     _send_single(helper.email, helper.first_name, subject, body)
 
 
-def send_verification_email(helper, verify_url: str) -> None:
+def send_verification_email(helper, verify_url: str, cc: str | None = None) -> None:
+    """Verifikations-Mail. Wenn `cc` gesetzt ist, bekommt die Adresse eine Kopie."""
     subject = f"Bitte bestätige deine Email – {settings.FESTIVAL_NAME}"
     body = (
         f"Hallo {helper.first_name},\n\n"
@@ -153,7 +165,7 @@ def send_verification_email(helper, verify_url: str) -> None:
         f"Wenn du dich nicht angemeldet hast, ignoriere diese Mail einfach.\n\n"
         f"Liebe Grüße\nDas Helfer-Team"
     )
-    _send_single(helper.email, helper.first_name, subject, body)
+    _send_single(helper.email, helper.first_name, subject, body, cc=cc)
 
 
 def send_swap_request_email(to_helper, from_helper, assignment, message: str | None) -> None:

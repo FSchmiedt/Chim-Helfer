@@ -505,6 +505,35 @@ def main() -> int:
         # Admin erzeugt ihr einen Reset-Link.
         r = c_admin.post(f"/admin/helpers/{anna_id}/reset-link", follow_redirects=True)
         check("admin generates anna's reset link", r.status_code == 200 and "Neuer Reset-Link" in r.text)
+
+        # Admin schickt Verifikations-Mail erneut. SMTP ist im Test-Env nicht
+        # konfiguriert → Endpoint soll info-Flash mit Link zurückgeben, einen
+        # frischen Token in der DB anlegen, und 200 (nicht crashen).
+        with eng.connect() as conn:
+            old_verify_token = conn.execute(sa_text(
+                "SELECT email_verification_token FROM helpers WHERE id=:i"
+            ), {"i": anna_id}).scalar()
+        r = c_admin.post(f"/admin/helpers/{anna_id}/resend-verify", follow_redirects=True)
+        check("admin resends verify mail (no SMTP)",
+              r.status_code == 200 and "SMTP nicht konfiguriert" in r.text and "/verify/" in r.text)
+        with eng.connect() as conn:
+            new_verify_token = conn.execute(sa_text(
+                "SELECT email_verification_token FROM helpers WHERE id=:i"
+            ), {"i": anna_id}).scalar()
+        check("  fresh verification token persisted",
+              new_verify_token is not None and new_verify_token != old_verify_token)
+
+        # Anna verifiziert über den neuen Token
+        from urllib.parse import urlparse
+        # nicht über den HTML-Body parsen, einfach DB-Token nehmen
+        r = httpx.Client(base_url=BASE, timeout=10).get(f"/verify/{new_verify_token}")
+        check("anna verifies with new admin-resent token", r.status_code == 200 and "bestätigt" in r.text)
+
+        # Erneuter Resend-Versuch sollte jetzt info-Flash "bereits verifiziert" zeigen
+        r = c_admin.post(f"/admin/helpers/{anna_id}/resend-verify", follow_redirects=True)
+        check("admin resend on verified helper is no-op",
+              r.status_code == 200 and "bereits verifiziert" in r.text)
+
         with eng.connect() as conn:
             anna_token = conn.execute(sa_text(
                 "SELECT password_reset_token FROM helpers WHERE id=:i"
