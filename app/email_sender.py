@@ -18,6 +18,21 @@ class MailError(RuntimeError):
     pass
 
 
+def _safe_formataddr(name: str | None, address: str) -> str:
+    """Wie email.utils.formataddr, aber mit UTF-8-Fallback für Umlaute/Akzente.
+
+    Standardmäßig versucht formataddr() den Display-Namen als ASCII zu encoden,
+    was bei deutschen Umlauten oder Namen wie "Lukáš" mit einem
+    UnicodeEncodeError fehlschlägt. Mit charset='utf-8' macht Python
+    automatisch RFC-2047-Encoding (=?utf-8?b?...?=) für den Namen.
+
+    Address wird unverändert weitergegeben (Email-Adressen sind ASCII-Only nach RFC).
+    """
+    if not name:
+        return address
+    return formataddr((name, address), charset="utf-8")
+
+
 def render_template(template: str, variables: dict[str, str]) -> str:
     """Einfache Platzhalter-Ersetzung: {{Name}} wird durch variables['Name'] ersetzt."""
     out = template
@@ -39,7 +54,7 @@ def send_mail(to_addresses: list[str], subject: str, body: str, bcc: bool = True
     if not to_addresses:
         return 0
 
-    sender = formataddr((settings.SMTP_FROM_NAME, settings.SMTP_FROM_ADDRESS))
+    sender = _safe_formataddr(settings.SMTP_FROM_NAME, settings.SMTP_FROM_ADDRESS)
 
     msg = MIMEMultipart()
     msg["From"] = sender
@@ -76,7 +91,7 @@ def send_personalized(helpers_and_bodies: Iterable[tuple[str, str, str]], subjec
     if not settings.smtp_enabled:
         raise MailError("SMTP ist nicht konfiguriert.")
 
-    sender = formataddr((settings.SMTP_FROM_NAME, settings.SMTP_FROM_ADDRESS))
+    sender = _safe_formataddr(settings.SMTP_FROM_NAME, settings.SMTP_FROM_ADDRESS)
     sent = 0
 
     if settings.SMTP_USE_TLS:
@@ -89,7 +104,7 @@ def send_personalized(helpers_and_bodies: Iterable[tuple[str, str, str]], subjec
         for email, first_name, body in helpers_and_bodies:
             msg = MIMEMultipart()
             msg["From"] = sender
-            msg["To"] = formataddr((first_name, email))
+            msg["To"] = _safe_formataddr(first_name, email)
             msg["Subject"] = subject
             msg.attach(MIMEText(body, "plain", "utf-8"))
             server.sendmail(settings.SMTP_FROM_ADDRESS, [email], msg.as_string())
@@ -115,10 +130,10 @@ def _send_single(to_email: str, to_name: str, subject: str, body: str,
     """
     if not settings.smtp_enabled:
         raise MailError("SMTP nicht konfiguriert.")
-    sender = formataddr((settings.SMTP_FROM_NAME, settings.SMTP_FROM_ADDRESS))
+    sender = _safe_formataddr(settings.SMTP_FROM_NAME, settings.SMTP_FROM_ADDRESS)
     msg = MIMEMultipart()
     msg["From"] = sender
-    msg["To"] = formataddr((to_name, to_email))
+    msg["To"] = _safe_formataddr(to_name, to_email)
     if cc:
         msg["Cc"] = cc
     msg["Subject"] = subject
