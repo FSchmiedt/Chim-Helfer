@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="mb-6 flex items-start justify-between">
+  <div>
+    <h2 class="text-2xl font-semibold">Freie Schichten</h2>
+    <p class="text-sm text-slate-500 mt-1">
+      Trag dich direkt selbst ein. Deine Wunschbereiche stehen oben.
+    </p>
+  </div>
+  <a href="/me" class="text-sm text-slate-500 hover:text-slate-800">← Mein Bereich</a>
+</div>
+
+{% if is_admin_preview %}
+<div class="mb-6 p-3 rounded-lg bg-indigo-50 border border-indigo-300 text-indigo-900 text-sm">
+  <strong>Admin-Vorschau:</strong> der Schichtplan ist für Helfer:innen noch gesperrt
+  (SHIFT_SIGNUP_OPEN=false). Du siehst hier was sie sehen werden, sobald du freigibst.
+</div>
+{% endif %}
+
+{% if flash %}
+{% set kind, msg = flash %}
+<div class="mb-6 p-4 rounded-lg text-sm
+            {% if kind == 'success' %}bg-emerald-50 border border-emerald-300 text-emerald-900
+            {% elif kind == 'warning' %}bg-amber-50 border border-amber-300 text-amber-900
+            {% else %}bg-sky-50 border border-sky-300 text-sky-900{% endif %}">
+  {{ msg }}
+</div>
+{% endif %}
+
+{% if not pref_area_ids %}
+<div class="bg-white border border-amber-300 rounded-lg p-5 text-sm">
+  Du hast bei der Anmeldung keine Wunschbereiche angegeben. Bitte wende dich kurz ans Helfer-Team, damit wir dir Bereiche zuordnen können — danach siehst du hier Schichten.
+</div>
+
+{% elif has_max %}
+<div class="bg-white border border-slate-300 rounded-lg p-5 text-sm">
+  <p class="font-semibold mb-2">Du hast deine Schicht 👍</p>
+  <p class="text-slate-600">
+    Du hast in deinem Profil „nur eine Schicht" gewählt. Wenn du doch mehr machen willst,
+    geh zurück in <a href="/me" class="text-primary-600 hover:underline">Mein Bereich</a>
+    und entferne dort das Häkchen.
+  </p>
+</div>
+
+{% else %}
+
+  {% set ns = namespace(any_shown=false) %}
+  {% for d in days %}
+    {% set day_groups = by_day_ordered_areas.get(d.id, []) %}
+    {% if day_groups %}
+      {% set ns.any_shown = true %}
+      <section class="mb-8">
+        <h3 class="font-semibold text-lg mb-3">{{ d.label }}
+          <span class="text-sm text-slate-500 font-normal">· {{ d.date.strftime('%d.%m.%Y') }}</span>
+        </h3>
+        {% for area_block in day_groups %}
+          <div class="mb-5">
+            <h4 class="font-medium text-sm text-slate-700 mb-2 flex items-center gap-2">
+              <span>{{ area_block.area_name }}</span>
+              {% if area_block.rank %}
+                <span class="text-xs px-1.5 py-0.5 rounded
+                             {% if area_block.rank == 1 %}bg-primary-600/10 text-primary-700
+                             {% else %}bg-slate-100 text-slate-600{% endif %}">
+                  {{ area_block.rank }}. Wahl
+                </span>
+              {% endif %}
+            </h4>
+            <ul class="space-y-2">
+              {% for item in area_block.shift_items|sort(attribute='shift.start_time') %}
+              {% set s = item.shift %}
+              <li class="bg-white border border-slate-200 rounded-lg p-3 flex items-center justify-between gap-3">
+                <div class="flex-1">
+                  <div class="font-medium text-sm">
+                    {{ s.time_range }}{% if s.label %} · {{ s.label }}{% endif %}
+                  </div>
+                  <div class="text-xs text-slate-500 mt-0.5">
+                    {{ item.n_assigned }} / {{ s.capacity }} besetzt
+                    {% if item.already_mine %}· <span class="text-emerald-700">du bist dabei</span>{% endif %}
+                  </div>
+                </div>
+                <div class="flex-shrink-0">
+                  {% if item.already_mine %}
+                    <span class="inline-block px-2 py-1 bg-emerald-100 text-emerald-800 text-xs rounded">✓ dabei</span>
+                  {% elif not item.is_free %}
+                    <span class="inline-block px-2 py-1 bg-slate-100 text-slate-500 text-xs rounded">voll</span>
+                  {% elif item.reason == 'conflict' %}
+                    <span class="inline-block px-2 py-1 bg-amber-100 text-amber-700 text-xs rounded" title="zeitlicher Konflikt mit anderer Schicht von dir">Zeitkonflikt</span>
+                  {% elif item.can_take %}
+                    {% if is_admin_preview %}
+                      <span class="inline-block px-2 py-1 bg-slate-100 text-slate-400 text-xs rounded" title="Admin-Vorschau – nicht buchbar">frei</span>
+                    {% else %}
+                    <form method="post" action="/schichten/{{ s.id }}/buchen">
+                      <button class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded">
+                        Eintragen
+                      </button>
+                    </form>
+                    {% endif %}
+                  {% else %}
+                    <span class="inline-block px-2 py-1 bg-slate-100 text-slate-400 text-xs rounded">—</span>
+                  {% endif %}
+                </div>
+              </li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endfor %}
+      </section>
+    {% endif %}
+  {% endfor %}
+
+  {% if not ns.any_shown %}
+    <div class="bg-white border border-dashed border-slate-300 rounded-lg p-6 text-center text-sm text-slate-500">
+      In deinen Wunschbereichen sind aktuell keine Schichten angelegt oder verfügbar.
+    </div>
+  {% endif %}
+
+{% endif %}
+
+{% endblock %}

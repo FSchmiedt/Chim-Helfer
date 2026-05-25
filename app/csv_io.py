@@ -31,6 +31,7 @@ HELPER_CSV_COLUMNS = [
     "pfand_paid_at",
     "pfand_returned",
     "pfand_returned_at",
+    "wants_only_one_shift",
     "created_at",
 ]
 
@@ -66,6 +67,7 @@ def helpers_to_csv(helpers: Iterable[models.Helper]) -> str:
             "pfand_paid_at": h.pfand_paid_at.isoformat(timespec="seconds") if h.pfand_paid_at else "",
             "pfand_returned": "ja" if h.pfand_returned else "nein",
             "pfand_returned_at": h.pfand_returned_at.isoformat(timespec="seconds") if h.pfand_returned_at else "",
+            "wants_only_one_shift": "ja" if h.wants_only_one_shift else "nein",
             "created_at": h.created_at.isoformat(timespec="seconds") if h.created_at else "",
         })
     return buf.getvalue()

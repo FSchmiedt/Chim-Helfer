@@ -8,6 +8,8 @@
     <p class="text-slate-500 text-sm">{{ helpers|length }} gefiltert · <a href="/admin/helpers" class="hover:underline">Filter zurücksetzen</a></p>
   </div>
   <div class="flex gap-2 flex-wrap">
+    <a href="/admin/helpers/new"
+       class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-sm">+ Helfer:in anlegen</a>
     <a href="/admin/export/helpers.csv" class="px-3 py-2 bg-white border border-slate-200 rounded-md text-sm hover:bg-slate-50">📥 CSV-Export</a>
     <button onclick="document.getElementById('import-dialog').showModal()"
             class="px-3 py-2 bg-white border border-slate-200 rounded-md text-sm hover:bg-slate-50">📤 CSV-Import</button>
@@ -104,6 +106,9 @@
       <tr class="hover:bg-slate-50 cursor-pointer" onclick="window.location='/admin/helpers/{{ h.id }}'">
         <td class="px-4 py-2">
           <a href="/admin/helpers/{{ h.id }}" class="font-medium hover:text-indigo-600">{{ h.first_name }} {{ h.last_name }}</a>
+          {% if h.wants_only_one_shift %}
+            <span title="möchte nur 1 Schicht (75 € Ticket)" class="text-orange-600 ml-1">⚠</span>
+          {% endif %}
         </td>
         <td class="px-4 py-2 text-slate-600">{{ h.email }}</td>
         <td class="px-4 py-2 text-slate-600">

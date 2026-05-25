@@ -1,0 +1,137 @@
+{% extends "admin/layout.html" %}
+
+{% block content %}
+
+<div class="mb-4">
+  <a href="/admin/helpers" class="text-sm text-slate-500 hover:text-slate-800">← zurück zur Liste</a>
+</div>
+
+<h1 class="text-2xl font-semibold mb-2">Helfer:in manuell anlegen</h1>
+<p class="text-sm text-slate-500 mb-6">
+  Für Walk-ins oder Telefon-Anmeldungen. Nur Name + Email sind Pflicht — die Person kann
+  sich später per „Passwort vergessen" ein Passwort setzen.
+  Die Email gilt als verifiziert (du bürgst).
+</p>
+
+{% if errors %}
+<div class="mb-6 p-4 bg-red-50 border border-red-300 rounded-md text-red-900 text-sm">
+  <p class="font-semibold mb-1">Bitte korrigieren:</p>
+  <ul class="list-disc ml-5">
+    {% for field, msg in errors.items() %}
+      <li>{{ field }}: {{ msg }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<form method="post" action="/admin/helpers/new" class="space-y-5">
+
+  <section class="bg-white border border-slate-200 rounded-lg p-5">
+    <h2 class="font-semibold mb-3">Stammdaten</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Vorname *</label>
+        <input type="text" name="first_name" required
+               value="{{ form_data.first_name if form_data else '' }}"
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Nachname *</label>
+        <input type="text" name="last_name" required
+               value="{{ form_data.last_name if form_data else '' }}"
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Email *</label>
+        <input type="email" name="email" required
+               value="{{ form_data.email if form_data else '' }}"
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Telefon (optional)</label>
+        <input type="tel" name="phone"
+               value="{{ form_data.phone if form_data else '' }}"
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">Geburtsdatum (optional)</label>
+        <input type="date" name="date_of_birth"
+               value="{{ form_data.date_of_birth if form_data else '' }}"
+               class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+      </div>
+    </div>
+  </section>
+
+  <section class="bg-white border border-slate-200 rounded-lg p-5">
+    <h2 class="font-semibold mb-2">Verfügbar an (optional)</h2>
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+      {% for d in days %}
+      <label class="flex items-center gap-2 px-2 py-1.5 border border-slate-200 rounded text-sm cursor-pointer hover:bg-slate-50">
+        <input type="checkbox" name="availability_day_ids" value="{{ d.id }}"
+               class="rounded text-indigo-600 focus:ring-indigo-600" />
+        <span>{{ d.label }}</span>
+      </label>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="bg-white border border-slate-200 rounded-lg p-5">
+    <h2 class="font-semibold mb-2">Wunschbereiche (optional, leer = Prio 5)</h2>
+    <div class="space-y-2">
+      {% for a in areas %}
+      <div class="flex items-center justify-between gap-3 p-2 border border-slate-200 rounded text-sm">
+        <span>{{ a.name }}</span>
+        <select name="area_rank_{{ a.id }}"
+                class="px-2 py-1 border border-slate-300 rounded text-sm">
+          <option value="">–</option>
+          {% for n in range(1, 6) %}
+            <option value="{{ n }}">{{ n }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="bg-white border border-slate-200 rounded-lg p-5">
+    <h2 class="font-semibold mb-2">Admin-Notiz (optional, nur intern)</h2>
+    <textarea name="admin_notes" rows="2"
+              class="w-full px-3 py-2 border border-slate-300 rounded text-sm"
+              placeholder="z.B. „Walk-in beim Aufbau, kommt Freitag"></textarea>
+  </section>
+
+  <section class="bg-white border border-slate-200 rounded-lg p-5">
+    <h2 class="font-semibold mb-3">Zugang (optional)</h2>
+
+    <div class="mb-4">
+      <label class="block text-xs text-slate-500 mb-1">Passwort vergeben (optional)</label>
+      <input type="text" name="password" placeholder="mindestens 8 Zeichen, leer lassen für späteren Reset-Link"
+             class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm font-mono" />
+      <p class="text-xs text-slate-500 mt-1">
+        Wenn leer: Person muss „Passwort vergessen" nutzen oder du erzeugst auf der Detail-Seite einen Reset-Link.
+      </p>
+    </div>
+
+    <label class="flex items-start gap-2 cursor-pointer text-sm">
+      <input type="checkbox" name="send_verify_email" value="on"
+             {% if not form_data or form_data.get('send_verify_email', 'on') == 'on' %}checked{% endif %}
+             class="mt-0.5 rounded text-indigo-600 focus:ring-indigo-600" />
+      <span>
+        <span class="font-medium">Verifikations-Mail jetzt schicken</span>
+        <span class="block text-xs text-slate-500 mt-0.5">
+          Wenn angehakt: die Person muss ihre Email-Adresse bestätigen wie bei der Selbstanmeldung.
+          Eine Kopie geht an unsere Festival-Adresse. Wenn nicht angehakt: Email gilt sofort als verifiziert.
+        </span>
+      </span>
+    </label>
+  </section>
+
+  <div class="flex items-center justify-between">
+    <a href="/admin/helpers" class="text-sm text-slate-500 hover:text-slate-800">Abbrechen</a>
+    <button class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">
+      Helfer:in anlegen
+    </button>
+  </div>
+</form>
+
+{% endblock %}

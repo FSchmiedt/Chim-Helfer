@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # Leer = Default-Text.
     REGISTRATION_CLOSED_MESSAGE: str = ""
 
+    # Selbst-Eintragen in Schichten ab wann offen? Default false, weil der
+    # Schichtplan oft noch nicht fertig ist, wenn die App live geht.
+    # Admin sieht /schichten immer (für Vorschau).
+    SHIFT_SIGNUP_OPEN: bool = False
+
     # Anforderungen (nur Anzeige)
     MIN_SHIFTS: int = 2
     MIN_DAYS: int = 2

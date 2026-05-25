@@ -25,6 +25,8 @@ services:
         value: "true"  # auf "false" setzen, um Anmeldungen zu schließen
       - key: REGISTRATION_CLOSED_MESSAGE
         sync: false  # optional, leer für Default-Text
+      - key: SHIFT_SIGNUP_OPEN
+        value: "false"  # auf "true" setzen, wenn Helfer:innen sich selbst eintragen dürfen
       - key: MIN_SHIFTS
         value: "2"
       - key: MIN_DAYS

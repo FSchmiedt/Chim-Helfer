@@ -47,6 +47,7 @@ NEW_COLUMNS_BY_TABLE = {
         ("pfand_paid_at", "TIMESTAMP"),
         ("pfand_returned", "BOOLEAN"),
         ("pfand_returned_at", "TIMESTAMP"),
+        ("wants_only_one_shift", "BOOLEAN"),
     ],
 }
 
@@ -54,6 +55,7 @@ NEW_COLUMNS_BY_TABLE = {
 BACKFILLS = [
     ("helpers", "UPDATE helpers SET pfand_paid = 0 WHERE pfand_paid IS NULL"),
     ("helpers", "UPDATE helpers SET pfand_returned = 0 WHERE pfand_returned IS NULL"),
+    ("helpers", "UPDATE helpers SET wants_only_one_shift = 0 WHERE wants_only_one_shift IS NULL"),
 ]
 
 

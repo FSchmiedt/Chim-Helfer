@@ -42,6 +42,9 @@ def main() -> int:
     env.setdefault("ADMIN_USERNAME", "admin")
     env.setdefault("ADMIN_PASSWORD", "smoketest-pw")
     env.setdefault("SECRET_KEY", "smoketest-secret-key-xxxxxxxxxxxxxxxxxxxx")
+    # Default: Schichtplan freigegeben — die "Locked"-Variante testen wir
+    # separat mit einem zweiten Server-Prozess weiter unten.
+    env.setdefault("SHIFT_SIGNUP_OPEN", "true")
 
     # Fresh DB
     db_file = ROOT / "chimaera_smoke.db"
@@ -61,7 +64,7 @@ def main() -> int:
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app.main:app", "--port", "8766", "--log-level", "warning"],
         cwd=ROOT, env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     try:
         # Warte auf Server
@@ -629,7 +632,332 @@ def main() -> int:
             ), {"i": anna_fri_assign}).scalar()
         check("swap: shift now belongs to Ben", new_owner2 == ben_id, f"owner={new_owner2}, expected={ben_id}")
 
+        print("\n=== Neue Features ===")
+
+        # --- 1. "Nur eine Schicht"-Toggle ---
+        r = post_form(c_ben2, "/me/shift-preference", [("wants_only_one_shift", "on")],
+                      follow_redirects=False)
+        check("Ben toggles wants_only_one_shift on", r.status_code == 303)
+        with eng.connect() as conn:
+            v = conn.execute(sa_text(
+                "SELECT wants_only_one_shift FROM helpers WHERE id=:i"
+            ), {"i": ben_id}).scalar()
+        check("  flag persisted = True", bool(v))
+        # Toggle aus
+        r = post_form(c_ben2, "/me/shift-preference", [], follow_redirects=False)
+        check("Ben toggles wants_only_one_shift off", r.status_code == 303)
+        with eng.connect() as conn:
+            v = conn.execute(sa_text(
+                "SELECT wants_only_one_shift FROM helpers WHERE id=:i"
+            ), {"i": ben_id}).scalar()
+        check("  flag persisted = False", not bool(v))
+
+        # --- 2. Selbst-Eintragen Schichtplan ---
+        # Admin legt neue Schicht im Bereich Bar an, an Sa (day_ids[1]).
+        # Ben hat Bar als Wunsch 1 (oben gesetzt), aber wir haben durch reset womöglich
+        # andere Preferences. Stellen wir sicher, dass Bar Wunschbereich ist:
+        with eng.begin() as conn:
+            conn.execute(sa_text(
+                "INSERT OR IGNORE INTO helper_area_preferences (helper_id, area_id, rank) "
+                "VALUES (:h, :a, 1)"
+            ), {"h": ben_id, "a": bar_area_id})
+
+        r = c_admin.post("/admin/shifts/new", data={
+            "area_id": str(bar_area_id),
+            "day_id": str(day_ids[1]),  # Sa
+            "label": "Selfsign-Bar 1",
+            "start_time": "14:00", "end_time": "17:00", "capacity": "1",
+        }, follow_redirects=False)
+        with eng.connect() as conn:
+            selfsign_shift_id = conn.execute(sa_text(
+                "SELECT id FROM shifts WHERE label='Selfsign-Bar 1'"
+            )).scalar()
+
+        # Ben sieht die Schicht
+        r = c_ben2.get("/schichten")
+        check("GET /schichten as Ben", r.status_code == 200 and "Selfsign-Bar 1" in r.text)
+
+        # Ben trägt sich ein
+        r = c_ben2.post(f"/schichten/{selfsign_shift_id}/buchen", follow_redirects=False)
+        check("Ben books selfsign shift", r.status_code == 303 and "flash=taken" in r.headers.get("location",""))
+        with eng.connect() as conn:
+            n = conn.execute(sa_text(
+                "SELECT COUNT(*) FROM shift_assignments WHERE shift_id=:s AND helper_id=:h"
+            ), {"s": selfsign_shift_id, "h": ben_id}).scalar()
+        check("  assignment created", n == 1)
+
+        # Versuch: nochmal eintragen → already
+        r = c_ben2.post(f"/schichten/{selfsign_shift_id}/buchen", follow_redirects=False)
+        check("Ben can't double-book same shift", "flash=already" in r.headers.get("location",""))
+
+        # Race-Test: Schicht ist jetzt voll (Kapazität 1). Anna versucht.
+        # Anna braucht Bar als Wunschbereich.
+        with eng.begin() as conn:
+            conn.execute(sa_text(
+                "INSERT OR IGNORE INTO helper_area_preferences (helper_id, area_id, rank) "
+                "VALUES (:h, :a, 1)"
+            ), {"h": anna_id, "a": bar_area_id})
+        r = c_anna.post(f"/schichten/{selfsign_shift_id}/buchen", follow_redirects=False)
+        check("Anna gets 'race' on full shift", "flash=race" in r.headers.get("location",""))
+
+        # Zeitkonflikt-Test: zweite Schicht zur GLEICHEN Zeit anlegen, Ben versucht
+        r = c_admin.post("/admin/shifts/new", data={
+            "area_id": str(bar_area_id),
+            "day_id": str(day_ids[1]),
+            "label": "Conflict-Bar",
+            "start_time": "15:00", "end_time": "16:00",
+            "capacity": "1",
+        }, follow_redirects=False)
+        with eng.connect() as conn:
+            conflict_id = conn.execute(sa_text(
+                "SELECT id FROM shifts WHERE label='Conflict-Bar'"
+            )).scalar()
+        r = c_ben2.post(f"/schichten/{conflict_id}/buchen", follow_redirects=False)
+        check("Ben blocked by time conflict", "flash=conflict" in r.headers.get("location",""))
+
+        # "Nur eine Schicht"-Limit-Test
+        post_form(c_ben2, "/me/shift-preference", [("wants_only_one_shift", "on")],
+                  follow_redirects=False)
+        # Ben hat schon mind. eine Zuweisung → versucht Conflict-Bar einzubuchen → max_reached vorrangig vor conflict
+        # (Reihenfolge: pref_area check, dann max_reached, dann already, dann conflict)
+        # Wir nehmen eine andere Schicht, die kein Konflikt wäre:
+        r = c_admin.post("/admin/shifts/new", data={
+            "area_id": str(bar_area_id),
+            "day_id": str(day_ids[2]),  # So
+            "label": "MaxLimit-Bar",
+            "start_time": "10:00", "end_time": "12:00",
+            "capacity": "5",
+        }, follow_redirects=False)
+        with eng.connect() as conn:
+            max_shift_id = conn.execute(sa_text(
+                "SELECT id FROM shifts WHERE label='MaxLimit-Bar'"
+            )).scalar()
+        r = c_ben2.post(f"/schichten/{max_shift_id}/buchen", follow_redirects=False)
+        check("Ben blocked by max_reached", "flash=max_reached" in r.headers.get("location",""))
+
+        # Toggle off, dann sollte's klappen
+        post_form(c_ben2, "/me/shift-preference", [], follow_redirects=False)
+        r = c_ben2.post(f"/schichten/{max_shift_id}/buchen", follow_redirects=False)
+        check("Ben books after max toggled off", "flash=taken" in r.headers.get("location",""))
+
+        # Wunschbereichs-Check: Schicht in nicht gewünschtem Bereich
+        # Anna will mal nicht in den Einlass — wir suchen einen Bereich, in dem
+        # Anna NICHT als Wunsch eingetragen ist.
+        with eng.connect() as conn:
+            unwanted_area_id = conn.execute(sa_text(
+                "SELECT a.id FROM areas a WHERE a.id NOT IN ("
+                "  SELECT area_id FROM helper_area_preferences WHERE helper_id=:h"
+                ") LIMIT 1"
+            ), {"h": anna_id}).scalar()
+        if unwanted_area_id:
+            r = c_admin.post("/admin/shifts/new", data={
+                "area_id": str(unwanted_area_id),
+                "day_id": str(day_ids[2]),
+                "label": "NotWanted-Shift",
+                "start_time": "16:00", "end_time": "18:00", "capacity": "1",
+            }, follow_redirects=False)
+            with eng.connect() as conn:
+                notw_id = conn.execute(sa_text(
+                    "SELECT id FROM shifts WHERE label='NotWanted-Shift'"
+                )).scalar()
+            r = c_anna.post(f"/schichten/{notw_id}/buchen", follow_redirects=False)
+            check("Anna blocked from non-wishlist area", "flash=not_wanted_area" in r.headers.get("location",""))
+
+        # --- 3. Admin legt manuell Helfer:in an ---
+        r = c_admin.get("/admin/helpers/new")
+        check("GET /admin/helpers/new", r.status_code == 200 and "Helfer:in manuell anlegen" in r.text)
+
+        # Validation: Email Pflicht
+        r = c_admin.post("/admin/helpers/new",
+                         data={"first_name": "Walk", "last_name": "In"})
+        check("admin/helpers/new requires email", r.status_code == 400)
+
+        # Erfolg
+        r = c_admin.post("/admin/helpers/new", data={
+            "first_name": "Walk", "last_name": "In",
+            "email": "walkin@example.org",
+            "phone": "0123",
+        }, follow_redirects=False)
+        check("admin creates Walk In", r.status_code == 303)
+        with eng.connect() as conn:
+            walkin = conn.execute(sa_text(
+                "SELECT id, email_verified_at, is_adult_confirmed FROM helpers WHERE email='walkin@example.org'"
+            )).fetchone()
+        check("  walkin persisted, email already verified, adult confirmed",
+              walkin is not None and walkin[1] is not None and bool(walkin[2]))
+
+        # Doppelte Email blockiert
+        r = c_admin.post("/admin/helpers/new", data={
+            "first_name": "Other", "last_name": "Walk",
+            "email": "walkin@example.org",
+        })
+        check("duplicate email rejected", r.status_code == 400 and "existiert bereits" in r.text)
+
+        # Admin-Anlage MIT Passwort → Person kann sich direkt einloggen
+        r = c_admin.post("/admin/helpers/new", data={
+            "first_name": "Manual", "last_name": "WithPw",
+            "email": "manualpw@example.org",
+            "password": "manualpw-secret-1",
+            # ohne send_verify_email → wird sofort verifiziert
+        }, follow_redirects=False)
+        check("admin creates manualpw with password", r.status_code == 303)
+        c_manual = httpx.Client(base_url=BASE, timeout=10)
+        r = post_form(c_manual, "/login", [
+            ("email", "manualpw@example.org"), ("password", "manualpw-secret-1"),
+        ], follow_redirects=False)
+        check("  manualpw can log in immediately", r.status_code == 303)
+
+        # Admin-Anlage mit zu kurzem Passwort
+        r = c_admin.post("/admin/helpers/new", data={
+            "first_name": "Short", "last_name": "Pw",
+            "email": "shortpw@example.org",
+            "password": "abc",
+        })
+        check("short password rejected", r.status_code == 400 and "Zeichen" in r.text)
+
+        # Admin-Anlage MIT send_verify_email → Helfer ist NICHT verifiziert,
+        # Token wurde erzeugt
+        r = c_admin.post("/admin/helpers/new", data={
+            "first_name": "Pending", "last_name": "Verify",
+            "email": "pendingverify@example.org",
+            "send_verify_email": "on",
+        }, follow_redirects=False)
+        check("admin creates pendingverify with verify-mail enabled", r.status_code == 303)
+        with eng.connect() as conn:
+            row = conn.execute(sa_text(
+                "SELECT email_verified_at, email_verification_token "
+                "FROM helpers WHERE email='pendingverify@example.org'"
+            )).fetchone()
+        check("  pendingverify NOT verified, token created",
+              row is not None and row[0] is None and row[1] is not None)
+
+        # Prio-Sortierung in /schichten: Bar hat Rang 1 für Ben, ein anderer
+        # Bereich Rang 2 → Bar-Block sollte VOR dem anderen erscheinen
+        # Wir setzen die Ränge EXPLIZIT (frühere Tests könnten andere Bereiche
+        # auf Rang 1 gesetzt haben):
+        with eng.connect() as conn:
+            crew_id = conn.execute(sa_text("SELECT id FROM areas WHERE name='Crew Catering'")).scalar()
+        with eng.begin() as conn:
+            # Alle Ben-Bereiche zurück auf Rang 5
+            conn.execute(sa_text(
+                "UPDATE helper_area_preferences SET rank=5 WHERE helper_id=:h"
+            ), {"h": ben_id})
+            # Bar = 1
+            conn.execute(sa_text(
+                "UPDATE helper_area_preferences SET rank=1 WHERE helper_id=:h AND area_id=:a"
+            ), {"h": ben_id, "a": bar_area_id})
+            # Crew Catering = 2
+            conn.execute(sa_text(
+                "UPDATE helper_area_preferences SET rank=2 WHERE helper_id=:h AND area_id=:a"
+            ), {"h": ben_id, "a": crew_id})
+        # Schicht in Crew Catering anlegen am gleichen Tag wie Bar (Sa)
+        c_admin.post("/admin/shifts/new", data={
+            "area_id": str(crew_id), "day_id": str(day_ids[1]),
+            "label": "Catering-Sa", "start_time": "12:00", "end_time": "14:00",
+            "capacity": "2",
+        }, follow_redirects=False)
+        r = c_ben2.get("/schichten")
+        # Bar-Bereich sollte VOR Crew Catering im HTML stehen (erste Markierung
+        # eines Bereichs ist der <h4> mit dem Bereichsnamen)
+        bar_pos = r.text.find('>Bar</span>')
+        catering_pos = r.text.find('>Crew Catering</span>')
+        check("/schichten sorted by priority (Bar before Crew Catering)",
+              bar_pos != -1 and catering_pos != -1 and bar_pos < catering_pos,
+              f"bar_pos={bar_pos}, catering_pos={catering_pos}")
+        check("  prio-1 label visible", "1. Wahl" in r.text)
+        check("  prio-2 label visible", "2. Wahl" in r.text)
+
+        # SHIFT_SIGNUP_OPEN=false-Tests: Wir starten dafür einen ZWEITEN Server
+        # auf einem anderen Port mit dem Flag auf false. Die DB ist dieselbe
+        # (chimaera_smoke.db), wir nutzen also die schon angelegten Helfer.
+        print("\n=== SHIFT_SIGNUP_OPEN=false ===")
+        env_locked = env.copy()
+        env_locked["SHIFT_SIGNUP_OPEN"] = "false"
+        proc_locked = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "app.main:app", "--port", "8767", "--log-level", "warning"],
+            cwd=ROOT, env=env_locked,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            BASE_LOCKED = "http://127.0.0.1:8767"
+            for _ in range(30):
+                try:
+                    if httpx.get(BASE_LOCKED + "/", timeout=2).status_code:
+                        break
+                except httpx.ConnectError:
+                    time.sleep(0.3)
+
+            # Ben loggt sich neu ein (sein aktuelles PW ist ben-password-2)
+            c_ben_locked = httpx.Client(base_url=BASE_LOCKED, timeout=10)
+            r = post_form(c_ben_locked, "/login", [
+                ("email", "ben@example.org"), ("password", "ben-password-2"),
+            ], follow_redirects=False)
+            check("ben logs in (locked server)", r.status_code == 303)
+
+            # Ben sieht Locked-Seite
+            r = c_ben_locked.get("/schichten")
+            check("ben sees locked page when SHIFT_SIGNUP_OPEN=false",
+                  r.status_code == 200 and "Schichtplan kommt in Kürze" in r.text)
+
+            # POST schlägt fehl
+            with eng.connect() as conn:
+                some_shift_id = conn.execute(sa_text("SELECT id FROM shifts LIMIT 1")).scalar()
+            r = c_ben_locked.post(f"/schichten/{some_shift_id}/buchen", follow_redirects=False)
+            check("POST /schichten/.../buchen blocked when locked",
+                  r.status_code == 303 and "flash=locked" in r.headers.get("location", ""))
+
+            # Admin sieht Vorschau (Admin-Bypass)
+            c_admin_locked = httpx.Client(base_url=BASE_LOCKED, timeout=10)
+            r = post_form(c_admin_locked, "/admin/login", [
+                ("username", "admin"), ("password", "smoketest-pw"),
+            ], follow_redirects=False)
+            # /schichten verlangt helper-Cookie. Admin-Bypass = wenn AdminCookie auch da ist,
+            # umgeht das den Lock. Im selben Client zusätzlich als Helfer einloggen:
+            r = post_form(c_admin_locked, "/login", [
+                ("email", "ben@example.org"), ("password", "ben-password-2"),
+            ], follow_redirects=False)
+            r = c_admin_locked.get("/schichten")
+            check("admin sees preview banner when locked",
+                  r.status_code == 200 and "Admin-Vorschau" in r.text)
+        finally:
+            try:
+                import fcntl
+                fcntl.fcntl(proc_locked.stderr.fileno(), fcntl.F_SETFL, os.O_NONBLOCK)
+                err_chunk = proc_locked.stderr.read() or b""
+                if b"Error" in err_chunk or b"Traceback" in err_chunk:
+                    print("=== LOCKED SERVER STDERR ===")
+                    print(err_chunk.decode(errors="replace")[-2000:])
+            except Exception:
+                pass
+            proc_locked.send_signal(signal.SIGTERM)
+            try:
+                proc_locked.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc_locked.kill()
+
+
+
     finally:
+        # Server-stderr abgreifen (vor terminate, damit wir nichts verlieren)
+        try:
+            import fcntl
+            err_fd = proc.stderr.fileno()
+            fcntl.fcntl(err_fd, fcntl.F_SETFL, os.O_NONBLOCK)
+            try:
+                err_chunk = proc.stderr.read()
+            except Exception:
+                err_chunk = b""
+            if err_chunk:
+                txt = err_chunk.decode(errors="replace")
+                # Nur Tracebacks/Errors anzeigen
+                rel = "\n".join(l for l in txt.split("\n")
+                                if any(k in l for k in ("Error", "Traceback", "  File ", "raise ",
+                                                        "Attribute", "Type", "Name")))
+                if rel.strip():
+                    print("\n=== SERVER STDERR ===")
+                    print(rel[-3000:])
+        except Exception as exc:
+            print("could not capture stderr:", exc)
         proc.send_signal(signal.SIGTERM)
         try:
             proc.wait(timeout=5)

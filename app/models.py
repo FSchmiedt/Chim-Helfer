@@ -108,6 +108,10 @@ class Helper(Base):
     is_adult_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     accepted_no_guarantee: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Helfer:in möchte nur eine einzige Schicht (statt 2 für Volunteer-Ticket).
+    # Bedeutung: zahlt 75€ für ein Ticket. Wird vom Helfer im /me Dashboard gesetzt.
+    wants_only_one_shift: Mapped[bool] = mapped_column(Boolean, default=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

@@ -19,6 +19,9 @@
       {% else %}
         · <span class="text-amber-700">Email nicht verifiziert</span>
       {% endif %}
+      {% if helper.wants_only_one_shift %}
+        · <span class="text-orange-700">⚠ möchte nur 1 Schicht (75 € Ticket)</span>
+      {% endif %}
     </p>
   </div>
   <form method="post" action="/admin/helpers/{{ helper.id }}/delete"

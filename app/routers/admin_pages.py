@@ -150,6 +150,165 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# Helfer:in manuell hinzufügen (z.B. Walk-in, Telefonanmeldung)
+# ---------------------------------------------------------------------------
+@router.get("/helpers/new", response_class=HTMLResponse)
+def helper_new_form(request: Request, db: Session = Depends(get_db)):
+    if (r := require_admin_redirect(request)):
+        return r
+    days = db.query(models.FestivalDay).order_by(
+        models.FestivalDay.sort_order, models.FestivalDay.date
+    ).all()
+    areas = db.query(models.Area).order_by(
+        models.Area.sort_order, models.Area.name
+    ).all()
+    return templates.TemplateResponse(
+        "admin/helper_new.html",
+        _ctx(request, days=days, areas=areas, errors=None, form_data=None),
+    )
+
+
+@router.post("/helpers/new", response_class=HTMLResponse)
+async def helper_new_submit(request: Request, db: Session = Depends(get_db)):
+    """Pragmatischer Pflicht-Datensatz: Vorname, Nachname, Email.
+    Optional: Telefon, Geburtsdatum, Tage, Wunschbereiche, Admin-Notiz."""
+    from datetime import date as ddate, datetime as ddatetime
+    if (r := require_admin_redirect(request)):
+        return r
+
+    form = await request.form()
+    errors: dict[str, str] = {}
+
+    first_name = (form.get("first_name") or "").strip()
+    last_name = (form.get("last_name") or "").strip()
+    email = (form.get("email") or "").strip().lower()
+    phone = (form.get("phone") or "").strip() or None
+    dob_raw = (form.get("date_of_birth") or "").strip()
+    admin_notes = (form.get("admin_notes") or "").strip() or None
+    availability_day_ids = [int(x) for x in form.getlist("availability_day_ids") if x]
+
+    # Wunschbereiche – wie im öffentlichen Formular: alle Bereiche bekommen
+    # einen Rang. Leer = Prio 5.
+    all_areas = db.query(models.Area).all()
+    area_preferences: dict[int, int] = {}
+    for a in all_areas:
+        raw = (form.get(f"area_rank_{a.id}") or "").strip()
+        if not raw:
+            area_preferences[a.id] = 5
+            continue
+        try:
+            r_val = int(raw)
+            area_preferences[a.id] = r_val if 1 <= r_val <= 5 else 5
+        except ValueError:
+            area_preferences[a.id] = 5
+
+    # Validierung
+    if not first_name:
+        errors["first_name"] = "Pflichtfeld"
+    if not last_name:
+        errors["last_name"] = "Pflichtfeld"
+    if not email or "@" not in email:
+        errors["email"] = "Gültige Email-Adresse nötig"
+    elif db.query(models.Helper).filter(models.Helper.email == email).one_or_none():
+        errors["email"] = "Email existiert bereits"
+
+    dob_parsed: ddate | None = None
+    if dob_raw:
+        try:
+            dob_parsed = ddate.fromisoformat(dob_raw)
+        except ValueError:
+            errors["date_of_birth"] = "Ungültiges Datum"
+
+    if errors:
+        days = db.query(models.FestivalDay).order_by(
+            models.FestivalDay.sort_order, models.FestivalDay.date
+        ).all()
+        return templates.TemplateResponse(
+            "admin/helper_new.html",
+            _ctx(request, days=days, areas=all_areas,
+                 errors=errors, form_data=dict(form)),
+            status_code=400,
+        )
+
+    # Zugang: optionales Passwort + Verifikations-Mail-Verhalten
+    password_raw = (form.get("password") or "").strip()
+    send_verify = form.get("send_verify_email") == "on"
+
+    if password_raw and len(password_raw) < 8:
+        errors["password"] = "Mindestens 8 Zeichen, oder leer lassen."
+
+    if errors:
+        days = db.query(models.FestivalDay).order_by(
+            models.FestivalDay.sort_order, models.FestivalDay.date
+        ).all()
+        return templates.TemplateResponse(
+            "admin/helper_new.html",
+            _ctx(request, days=days, areas=all_areas,
+                 errors=errors, form_data=dict(form)),
+            status_code=400,
+        )
+
+    # Helper-Objekt aufbauen. Geburtsdatum default 1990-01-01 (Spalte ist NOT NULL).
+    from ..passwords import hash_password, generate_token
+    helper_kwargs = dict(
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        phone=phone,
+        date_of_birth=dob_parsed or ddate(1990, 1, 1),
+        is_adult_confirmed=True,  # Admin bürgt
+        accepted_no_guarantee=True,
+        status="registered",
+        admin_notes=admin_notes,
+    )
+
+    if password_raw:
+        helper_kwargs["password_hash"] = hash_password(password_raw)
+
+    if send_verify:
+        # Email noch nicht verifiziert; Token wird gleich erzeugt und gemailt.
+        helper_kwargs["email_verification_token"] = generate_token()
+    else:
+        # Email gilt sofort als verifiziert.
+        helper_kwargs["email_verified_at"] = ddatetime.utcnow()
+
+    helper = models.Helper(**helper_kwargs)
+    db.add(helper)
+    db.flush()
+
+    valid_day_ids = {d.id for d in db.query(models.FestivalDay).all()}
+    for did in availability_day_ids:
+        if did in valid_day_ids:
+            db.add(models.Availability(helper_id=helper.id, day_id=did))
+
+    valid_area_ids = {a.id for a in all_areas}
+    for aid, rank in area_preferences.items():
+        if aid in valid_area_ids:
+            db.add(models.HelperAreaPreference(
+                helper_id=helper.id, area_id=aid, rank=rank,
+            ))
+
+    db.commit()
+
+    # Verifikations-Mail rausschicken, falls angefordert
+    if send_verify:
+        base = str(request.base_url).rstrip("/")
+        verify_url = f"{base}/verify/{helper.email_verification_token}"
+        cc_address = settings.SMTP_FROM_ADDRESS or None
+        if settings.smtp_enabled:
+            try:
+                from ..email_sender import send_verification_email
+                send_verification_email(helper, verify_url, cc=cc_address)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[admin helper_new] SMTP-Fehler beim Verify-Versand: {exc}")
+        else:
+            print(f"[admin helper_new] SMTP nicht konfiguriert. "
+                  f"Verifikations-Link für {helper.email}: {verify_url}")
+
+    return RedirectResponse(f"/admin/helpers/{helper.id}", status_code=303)
+
+
+# ---------------------------------------------------------------------------
 # Helferübersicht
 # ---------------------------------------------------------------------------
 @router.get("/helpers", response_class=HTMLResponse)

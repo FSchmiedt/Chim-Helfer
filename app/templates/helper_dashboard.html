@@ -188,8 +188,42 @@
   </ul>
   {% else %}
   <div class="bg-white border border-dashed border-slate-300 rounded-lg p-6 text-center text-sm text-slate-500">
-    Du bist noch keiner Schicht zugewiesen. Das Helfer-Team vergibt Schichten nach der Anmeldephase.
+    Du bist noch keiner Schicht zugewiesen.
+    {% if shift_signup_open %}
+      <a href="/schichten" class="text-primary-600 hover:underline">→ jetzt eine Schicht aussuchen</a>
+    {% else %}
+      <span class="block text-xs mt-1 text-slate-400">Der Schichtplan wird in Kürze freigegeben — du bekommst eine Mail.</span>
+    {% endif %}
   </div>
+  {% endif %}
+
+  <!-- Direktbuchung CTA, wenn assigned > 0 und nicht „nur eine" gewählt -->
+  {% if assignments and not helper.wants_only_one_shift and shift_signup_open %}
+  <div class="mt-3 text-sm text-slate-600">
+    Eine weitere Schicht übernehmen? <a href="/schichten" class="text-primary-600 hover:underline font-medium">→ freie Schichten anzeigen</a>
+  </div>
+  {% endif %}
+</section>
+
+<!-- "Nur eine Schicht" Präferenz -->
+<section class="bg-white rounded-lg border border-slate-200 p-5 mb-8">
+  <h3 class="font-semibold mb-2">Anzahl Schichten</h3>
+  <form method="post" action="/me/shift-preference" class="flex items-start gap-3">
+    <label class="flex items-start gap-2 cursor-pointer text-sm">
+      <input type="checkbox" name="wants_only_one_shift" value="on"
+             {% if helper.wants_only_one_shift %}checked{% endif %}
+             onchange="this.form.submit()"
+             class="mt-0.5 rounded text-primary-600 focus:ring-primary-600" />
+      <span>
+        <span class="font-medium">Ich möchte nur <em>eine</em> Schicht übernehmen</span>
+        <span class="block text-xs text-slate-500 mt-0.5">
+          Statt der üblichen 2 Schichten fürs kostenlose Volunteer-Ticket. Wir würden dir dann 75 € für ein Ticket berechnen.
+        </span>
+      </span>
+    </label>
+  </form>
+  {% if request.query_params.get('shift_pref_saved') %}
+  <p class="text-xs text-emerald-700 mt-2">✓ gespeichert</p>
   {% endif %}
 </section>
 
