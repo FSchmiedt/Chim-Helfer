@@ -336,7 +336,13 @@ def helpers_list(
     if day_id_int:
         query = query.join(models.Availability).filter(models.Availability.day_id == day_id_int)
     if area_id_int:
-        query = query.join(models.HelperAreaPreference).filter(models.HelperAreaPreference.area_id == area_id_int)
+        # Prio 5 ist der Default "egal" und bedeutet kein aktives
+        # Interesse am Bereich. Beim Filtern zeigen wir nur Helfer:innen
+        # mit Prio 1-4 für diesen Bereich.
+        query = query.join(models.HelperAreaPreference).filter(
+            models.HelperAreaPreference.area_id == area_id_int,
+            models.HelperAreaPreference.rank < 5,
+        )
     if status_filter:
         query = query.filter(models.Helper.status == status_filter)
     if experience == "yes":
@@ -954,7 +960,13 @@ def mail_page(
     if day_id_int:
         query = query.join(models.Availability).filter(models.Availability.day_id == day_id_int)
     if area_id_int:
-        query = query.join(models.HelperAreaPreference).filter(models.HelperAreaPreference.area_id == area_id_int)
+        # Prio 5 ist der Default "egal" und bedeutet kein aktives
+        # Interesse am Bereich. Beim Filtern zeigen wir nur Helfer:innen
+        # mit Prio 1-4 für diesen Bereich.
+        query = query.join(models.HelperAreaPreference).filter(
+            models.HelperAreaPreference.area_id == area_id_int,
+            models.HelperAreaPreference.rank < 5,
+        )
     if status_filter:
         query = query.filter(models.Helper.status == status_filter)
     helpers = query.distinct().all()
@@ -1079,7 +1091,13 @@ def export_emails(
     if day_id_int:
         query = query.join(models.Availability).filter(models.Availability.day_id == day_id_int)
     if area_id_int:
-        query = query.join(models.HelperAreaPreference).filter(models.HelperAreaPreference.area_id == area_id_int)
+        # Prio 5 ist der Default "egal" und bedeutet kein aktives
+        # Interesse am Bereich. Beim Filtern zeigen wir nur Helfer:innen
+        # mit Prio 1-4 für diesen Bereich.
+        query = query.join(models.HelperAreaPreference).filter(
+            models.HelperAreaPreference.area_id == area_id_int,
+            models.HelperAreaPreference.rank < 5,
+        )
     if status_filter:
         query = query.filter(models.Helper.status == status_filter)
     helpers = query.distinct().all()

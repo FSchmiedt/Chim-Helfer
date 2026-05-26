@@ -867,6 +867,32 @@ def main() -> int:
         check("  prio-1 label visible", "1. Wahl" in r.text)
         check("  prio-2 label visible", "2. Wahl" in r.text)
 
+        # Admin-Filter: Bereich-Filter schließt Prio 5 aus
+        # Ben hat Bar=1 (durch obigen UPDATE), Anna hat Bar=5 (wir prüfen
+        # gleich; ggf. setzen wir's explizit).
+        with eng.connect() as conn:
+            anna_bar = conn.execute(sa_text(
+                "SELECT rank FROM helper_area_preferences "
+                "WHERE helper_id=:h AND area_id=:a"
+            ), {"h": anna_id, "a": bar_area_id}).scalar()
+        if anna_bar is None:
+            with eng.begin() as conn:
+                conn.execute(sa_text(
+                    "INSERT INTO helper_area_preferences (helper_id, area_id, rank) "
+                    "VALUES (:h, :a, 5)"
+                ), {"h": anna_id, "a": bar_area_id})
+        elif anna_bar != 5:
+            with eng.begin() as conn:
+                conn.execute(sa_text(
+                    "UPDATE helper_area_preferences SET rank=5 "
+                    "WHERE helper_id=:h AND area_id=:a"
+                ), {"h": anna_id, "a": bar_area_id})
+
+        r = c_admin.get(f"/admin/helpers?area_id={bar_area_id}")
+        check("admin filter on Bar excludes Anna (rank 5)",
+              r.status_code == 200 and "anna@example.org" not in r.text)
+        check("  Bar filter includes Ben (rank 1)", "ben@example.org" in r.text)
+
         # SHIFT_SIGNUP_OPEN=false-Tests: Wir starten dafür einen ZWEITEN Server
         # auf einem anderen Port mit dem Flag auf false. Die DB ist dieselbe
         # (chimaera_smoke.db), wir nutzen also die schon angelegten Helfer.
