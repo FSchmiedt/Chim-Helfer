@@ -83,16 +83,44 @@ def send_mail(to_addresses: list[str], subject: str, body: str, bcc: bool = True
         raise MailError(f"SMTP-Fehler: {exc}") from exc
 
 
-def send_personalized(helpers_and_bodies: Iterable[tuple[str, str, str]], subject: str) -> int:
+def _email_looks_ok(address: str) -> bool:
+    """Sehr leichte Sanity-Prüfung: ASCII + genau ein @ + nicht-leer auf beiden Seiten.
+
+    SMTP-Server (insbesondere Google Workspace) akzeptieren Unicode-Adressen
+    nur eingeschränkt (SMTPUTF8). Wir behandeln Nicht-ASCII-Adressen als kaputt
+    und skippen sie, damit der Versand für die anderen weiterläuft.
+    """
+    if not address:
+        return False
+    try:
+        address.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    if address.count("@") != 1:
+        return False
+    local, _, domain = address.partition("@")
+    return bool(local) and bool(domain) and "." in domain
+
+
+def send_personalized(
+    helpers_and_bodies: Iterable[tuple[str, str, str]],
+    subject: str,
+) -> tuple[int, list[tuple[str, str]]]:
     """Versendet personalisierte Einzelmails.
 
-    helpers_and_bodies: Iterable aus (email, first_name, body) — body ist bereits fertig gerendert.
+    helpers_and_bodies: Iterable aus (email, first_name, body) — body ist bereits
+    fertig gerendert.
+
+    Returns: (anzahl_gesendet, liste_skipped) wo `skipped` Tupel (email, grund) sind.
+    Statt zu crashen, wenn eine einzelne Adresse kaputt ist, wird sie geskippt
+    und der Versand für die anderen läuft weiter.
     """
     if not settings.smtp_enabled:
         raise MailError("SMTP ist nicht konfiguriert.")
 
     sender = _safe_formataddr(settings.SMTP_FROM_NAME, settings.SMTP_FROM_ADDRESS)
     sent = 0
+    skipped: list[tuple[str, str]] = []
 
     if settings.SMTP_USE_TLS:
         server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30)
@@ -102,20 +130,31 @@ def send_personalized(helpers_and_bodies: Iterable[tuple[str, str, str]], subjec
     try:
         server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
         for email, first_name, body in helpers_and_bodies:
-            msg = MIMEMultipart()
-            msg["From"] = sender
-            msg["To"] = _safe_formataddr(first_name, email)
-            msg["Subject"] = subject
-            msg.attach(MIMEText(body, "plain", "utf-8"))
-            server.sendmail(settings.SMTP_FROM_ADDRESS, [email], msg.as_string())
-            sent += 1
+            # Whitespace und Zero-Width-Zeichen rausputzen, dann prüfen.
+            clean_email = (email or "").strip()
+            if not _email_looks_ok(clean_email):
+                skipped.append((email or "(leer)", "Adresse ungültig (Sonderzeichen oder kein @)"))
+                continue
+            try:
+                msg = MIMEMultipart()
+                msg["From"] = sender
+                msg["To"] = _safe_formataddr(first_name, clean_email)
+                msg["Subject"] = subject
+                msg.attach(MIMEText(body, "plain", "utf-8"))
+                server.sendmail(settings.SMTP_FROM_ADDRESS, [clean_email], msg.as_string())
+                sent += 1
+            except (UnicodeEncodeError, smtplib.SMTPRecipientsRefused,
+                    smtplib.SMTPDataError, smtplib.SMTPSenderRefused) as exc:
+                # Einzelmail scheitert → loggen + weitermachen.
+                print(f"[send_personalized] FAILED {clean_email}: {exc}")
+                skipped.append((clean_email, str(exc)[:200]))
     finally:
         try:
             server.quit()
         except Exception:  # noqa: BLE001
             pass
 
-    return sent
+    return sent, skipped
 
 
 # ---------------------------------------------------------------------------

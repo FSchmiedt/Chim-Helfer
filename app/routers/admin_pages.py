@@ -1006,9 +1006,17 @@ async def mail_send(request: Request, db: Session = Depends(get_db)):
         ]
 
     try:
-        count = send_personalized(helpers_for_send, subject=subject)
-        message = f"{count} Mail(s) erfolgreich versendet."
-        success = True
+        count, skipped = send_personalized(helpers_for_send, subject=subject)
+        if skipped:
+            skipped_lines = "\n".join(f"  • {addr}: {reason}" for addr, reason in skipped)
+            message = (f"{count} Mail(s) versendet, {len(skipped)} übersprungen "
+                       f"(fehlerhafte Adresse oder SMTP-Ablehnung):\n{skipped_lines}\n\n"
+                       f"Tipp: Adresse(n) im Admin korrigieren und Mail erneut senden — "
+                       f"oder die Person per Hand anschreiben.")
+            success = "partial"
+        else:
+            message = f"{count} Mail(s) erfolgreich versendet."
+            success = True
     except MailError as exc:
         message = str(exc)
         success = False

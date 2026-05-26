@@ -6,9 +6,10 @@
 <p class="text-slate-500 text-sm mb-6">Filtere nach Einsatzbereich, Tag oder Status. Dann via SMTP versenden – oder Adressen kopieren und ins Mailprogramm übernehmen.</p>
 
 {% if flash_message %}
-<div class="mb-4 p-3 rounded text-sm {% if flash_success %}bg-green-50 border border-green-200 text-green-800{% else %}bg-red-50 border border-red-200 text-red-800{% endif %}">
-  {{ flash_message }}
-</div>
+<div class="mb-4 p-3 rounded text-sm whitespace-pre-line
+            {% if flash_success == True %}bg-green-50 border border-green-200 text-green-800
+            {% elif flash_success == 'partial' %}bg-amber-50 border border-amber-300 text-amber-900
+            {% else %}bg-red-50 border border-red-200 text-red-800{% endif %}">{{ flash_message }}</div>
 {% endif %}
 
 <!-- Filter -->
