@@ -187,20 +187,33 @@
     {% endfor %}
   </ul>
   {% else %}
-  <div class="bg-white border border-dashed border-slate-300 rounded-lg p-6 text-center text-sm text-slate-500">
-    Du bist noch keiner Schicht zugewiesen.
+  <div class="bg-white border border-slate-200 rounded-lg p-6 text-center">
+    <p class="text-slate-600 mb-4">Du bist noch keiner Schicht zugewiesen.</p>
     {% if shift_signup_open %}
-      <a href="/schichten" class="text-primary-600 hover:underline">→ jetzt eine Schicht aussuchen</a>
+      <a href="/schichten"
+         class="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white font-semibold rounded-lg shadow-sm transition text-base">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+        </svg>
+        Jetzt Schicht(en) aussuchen
+      </a>
+      <p class="text-xs text-slate-400 mt-3">Hier trägst du dich selbst in freie Schichten ein.</p>
     {% else %}
-      <span class="block text-xs mt-1 text-slate-400">Der Schichtplan wird in Kürze freigegeben — du bekommst eine Mail.</span>
+      <span class="block text-sm text-slate-400">Der Schichtplan wird in Kürze freigegeben — du bekommst eine Mail.</span>
     {% endif %}
   </div>
   {% endif %}
 
   <!-- Direktbuchung CTA, wenn assigned > 0 und nicht „nur eine" gewählt -->
   {% if assignments and not helper.wants_only_one_shift and shift_signup_open %}
-  <div class="mt-3 text-sm text-slate-600">
-    Eine weitere Schicht übernehmen? <a href="/schichten" class="text-primary-600 hover:underline font-medium">→ freie Schichten anzeigen</a>
+  <div class="mt-4 text-center">
+    <a href="/schichten"
+       class="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg shadow-sm transition text-sm">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+      </svg>
+      Weitere Schicht übernehmen
+    </a>
   </div>
   {% endif %}
 </section>

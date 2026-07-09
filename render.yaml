@@ -22,11 +22,11 @@ services:
       - key: FESTIVAL_NAME
         value: Chimaera Festival
       - key: REGISTRATION_OPEN
-        value: "true"  # auf "false" setzen, um Anmeldungen zu schließen
+        sync: false  # im Render-Dashboard setzen (true/false); wird bei Deploys NICHT überschrieben
       - key: REGISTRATION_CLOSED_MESSAGE
         sync: false  # optional, leer für Default-Text
       - key: SHIFT_SIGNUP_OPEN
-        value: "false"  # auf "true" setzen, wenn Helfer:innen sich selbst eintragen dürfen
+        sync: false  # im Render-Dashboard setzen (true/false); wird bei Deploys NICHT überschrieben
       - key: SHIFT_SIGNUP_OPEN_AT
         sync: false  # optional: ISO-Zeitpunkt für automatische Freischaltung, z.B. 2026-07-10T14:00:00+02:00
       - key: SHIFT_SIGNUP_PREVIEW_EMAILS
