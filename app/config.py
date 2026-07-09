@@ -31,6 +31,17 @@ class Settings(BaseSettings):
     # Admin sieht /schichten immer (für Vorschau).
     SHIFT_SIGNUP_OPEN: bool = False
 
+    # Optional: Zeitgesteuerte Freischaltung. ISO-8601-Zeitpunkt mit Zeitzone,
+    # z.B. "2026-07-10T14:00:00+02:00" (Berlin Sommerzeit). Ab diesem Moment
+    # ist der Self-Signup automatisch offen, ohne dass jemand einen Schalter
+    # umlegen muss. SHIFT_SIGNUP_OPEN=true überschreibt das (schaltet sofort frei).
+    SHIFT_SIGNUP_OPEN_AT: str = ""
+
+    # Optional: Komma-getrennte Liste von Email-Adressen, die den Schichtplan
+    # schon VOR der Freischaltung sehen und testen dürfen (z.B. Orga-Team).
+    # Beispiel: "test@example.org, orga@example.org"
+    SHIFT_SIGNUP_PREVIEW_EMAILS: str = ""
+
     # Anforderungen (nur Anzeige)
     MIN_SHIFTS: int = 2
     MIN_DAYS: int = 2
@@ -55,6 +66,42 @@ class Settings(BaseSettings):
     @property
     def smtp_enabled(self) -> bool:
         return bool(self.SMTP_HOST and self.SMTP_USER and self.SMTP_PASSWORD)
+
+    @property
+    def shift_signup_effective_open(self) -> bool:
+        """Ist der Self-Signup gerade offen?
+
+        True, wenn entweder der manuelle Schalter an ist ODER die zeitgesteuerte
+        Freischaltung (SHIFT_SIGNUP_OPEN_AT) erreicht/überschritten ist.
+        """
+        if self.SHIFT_SIGNUP_OPEN:
+            return True
+        opens_at = self._parse_signup_open_at()
+        if opens_at is None:
+            return False
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc) >= opens_at
+
+    def _parse_signup_open_at(self):
+        """Parst SHIFT_SIGNUP_OPEN_AT zu einem tz-aware datetime, oder None."""
+        raw = (self.SHIFT_SIGNUP_OPEN_AT or "").strip()
+        if not raw:
+            return None
+        from datetime import datetime, timezone
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        # Falls ohne Zeitzone angegeben, als UTC interpretieren (defensiv).
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    @property
+    def shift_signup_preview_emails(self) -> set[str]:
+        """Set der Preview-Email-Adressen (lowercase, getrimmt)."""
+        raw = self.SHIFT_SIGNUP_PREVIEW_EMAILS or ""
+        return {e.strip().lower() for e in raw.split(",") if e.strip()}
 
 
 settings = Settings()

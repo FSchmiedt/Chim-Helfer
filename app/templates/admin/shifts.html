@@ -33,36 +33,53 @@
   {% if area_id or day_id %}<a href="/admin/shifts" class="text-sm text-slate-500 hover:underline">zurücksetzen</a>{% endif %}
 </form>
 
-<!-- Schichten-Grid -->
-{% if grouped %}
-<div class="space-y-6">
-  {% for area_name, days_map in grouped.items() %}
-  <section>
-    <h2 class="font-semibold text-lg mb-2">{{ area_name }}</h2>
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-      {% for day_label, shifts in days_map.items() %}
-        {% for s in shifts %}
-        <a href="/admin/shifts/{{ s.id }}" class="block bg-white border border-slate-200 rounded-lg p-4 hover:border-indigo-400 hover:shadow-sm transition">
-          <div class="flex items-start justify-between">
-            <div>
-              <div class="text-xs uppercase tracking-wide text-slate-500">{{ day_label }}</div>
-              <div class="font-semibold mt-0.5">{{ s.time_range }}</div>
-              {% if s.label %}<div class="text-sm text-slate-600 mt-1">{{ s.label }}</div>{% endif %}
+<!-- Schichten – nach Bereich (aufklappbar), innerhalb nach Tag + Startzeit -->
+{% if grouped_areas %}
+<div class="space-y-3">
+  {% for block in grouped_areas %}
+  <details class="bg-white border border-slate-200 rounded-lg overflow-hidden" {% if grouped_areas|length == 1 %}open{% endif %}>
+    <summary class="cursor-pointer select-none px-4 py-3 flex items-center justify-between hover:bg-slate-50">
+      <span class="font-semibold text-lg">{{ block.area.name }}</span>
+      <span class="flex items-center gap-2 text-sm">
+        <span class="text-slate-500">{{ block.n_shifts }} Schicht{{ 'en' if block.n_shifts != 1 else '' }}</span>
+        {% if block.n_open > 0 %}
+          <span class="px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">{{ block.n_open }} offen</span>
+        {% else %}
+          <span class="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">voll besetzt</span>
+        {% endif %}
+        <svg class="w-4 h-4 text-slate-400 transition-transform details-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+        </svg>
+      </span>
+    </summary>
+    <div class="px-4 pb-4 pt-1 border-t border-slate-100">
+      {% for day_block in block.days %}
+      <div class="mb-4 last:mb-0">
+        <h3 class="text-xs uppercase tracking-wide text-slate-500 font-medium mb-2 mt-3">{{ day_block.day_label }}</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {% for s in day_block.shifts %}
+          <a href="/admin/shifts/{{ s.id }}" class="block bg-slate-50 border border-slate-200 rounded-lg p-3 hover:border-indigo-400 hover:shadow-sm transition">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <div class="font-semibold">{{ s.time_range }}</div>
+                {% if s.label %}<div class="text-sm text-slate-600 mt-0.5">{{ s.label }}</div>{% endif %}
+              </div>
+              {% set filled = s.assignments|length %}
+              {% set ratio_class = 'bg-green-100 text-green-800' if filled >= s.capacity else ('bg-amber-100 text-amber-800' if filled > 0 else 'bg-red-100 text-red-800') %}
+              <span class="px-2 py-0.5 rounded text-xs font-medium flex-shrink-0 {{ ratio_class }}">{{ filled }} / {{ s.capacity }}</span>
             </div>
-            {% set filled = s.assignments|length %}
-            {% set ratio_class = 'bg-green-100 text-green-800' if filled >= s.capacity else ('bg-amber-100 text-amber-800' if filled > 0 else 'bg-red-100 text-red-800') %}
-            <span class="px-2 py-0.5 rounded text-xs font-medium {{ ratio_class }}">{{ filled }} / {{ s.capacity }}</span>
-          </div>
-          {% if s.assignments %}
-          <div class="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-600">
-            {{ s.assignments | map(attribute='helper.first_name') | join(', ') }}
-          </div>
-          {% endif %}
-        </a>
-        {% endfor %}
+            {% if s.assignments %}
+            <div class="mt-2 pt-2 border-t border-slate-200 text-xs text-slate-600">
+              {{ s.assignments | map(attribute='helper.first_name') | join(', ') }}
+            </div>
+            {% endif %}
+          </a>
+          {% endfor %}
+        </div>
+      </div>
       {% endfor %}
     </div>
-  </section>
+  </details>
   {% endfor %}
 </div>
 {% else %}
@@ -74,6 +91,10 @@
   </button>
 </div>
 {% endif %}
+
+<style>
+  details[open] .details-chevron { transform: rotate(180deg); }
+</style>
 
 <!-- Dialog: Neue Schicht -->
 <dialog id="new-shift-dialog" class="rounded-lg p-6 max-w-md w-full backdrop:bg-black/40">

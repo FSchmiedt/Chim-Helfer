@@ -714,23 +714,57 @@ def shifts_list(
         query = query.filter(models.Shift.day_id == day_id_int)
     shifts = query.all()
 
-    # Gruppieren nach Bereich -> Tag. Wir konvertieren am Ende in reguläre
-    # Dicts, damit das Template nicht mit defaultdict-Magie rumhantieren muss
-    # (spart den fragilen `{% if x.update(...) %}`-Hack).
-    grouped_dd: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
-    for s in shifts:
-        grouped_dd[s.area.name][s.day.label].append(s)
-    for area_name in grouped_dd:
-        for day_label in grouped_dd[area_name]:
-            grouped_dd[area_name][day_label].sort(key=lambda s: s.start_time)
-    grouped = {area: dict(days_map) for area, days_map in grouped_dd.items()}
+    days = db.query(models.FestivalDay).order_by(
+        models.FestivalDay.sort_order, models.FestivalDay.date
+    ).all()
+    areas = db.query(models.Area).order_by(
+        models.Area.sort_order, models.Area.name
+    ).all()
 
-    days = db.query(models.FestivalDay).order_by(models.FestivalDay.sort_order, models.FestivalDay.date).all()
-    areas = db.query(models.Area).order_by(models.Area.sort_order, models.Area.name).all()
+    # Sortierschlüssel-Maps für Tag- und Bereichs-Reihenfolge
+    day_order = {d.id: i for i, d in enumerate(days)}
+    day_label_by_id = {d.id: d.label for d in days}
+    area_order = {a.id: i for i, a in enumerate(areas)}
+
+    # Struktur aufbauen: pro Bereich eine geordnete Liste von Tagen,
+    # pro Tag die Schichten nach Startzeit. Alles fertig sortiert, damit
+    # das Template nur noch rendern muss.
+    #   grouped_areas = [
+    #     {"area": <Area>, "n_shifts": int, "n_open": int,
+    #      "days": [ {"day_label": str, "shifts": [<Shift>...]}, ... ] },
+    #     ... ]
+    tmp: dict[int, dict[int, list]] = {}
+    for s in shifts:
+        tmp.setdefault(s.area_id, {}).setdefault(s.day_id, []).append(s)
+
+    grouped_areas = []
+    area_by_id = {a.id: a for a in areas}
+    for area_id_key in sorted(tmp.keys(), key=lambda aid: area_order.get(aid, 999)):
+        days_map = tmp[area_id_key]
+        day_blocks = []
+        n_shifts = 0
+        n_open = 0
+        for day_id_key in sorted(days_map.keys(), key=lambda did: day_order.get(did, 999)):
+            shift_list = sorted(days_map[day_id_key], key=lambda s: s.start_time)
+            for s in shift_list:
+                n_shifts += 1
+                if len(s.assignments) < s.capacity:
+                    n_open += 1
+            day_blocks.append({
+                "day_label": day_label_by_id.get(day_id_key, "?"),
+                "shifts": shift_list,
+            })
+        grouped_areas.append({
+            "area": area_by_id.get(area_id_key),
+            "n_shifts": n_shifts,
+            "n_open": n_open,
+            "days": day_blocks,
+        })
 
     return templates.TemplateResponse(
         "admin/shifts.html",
-        _ctx(request, grouped=grouped, days=days, areas=areas, area_id=area_id_int, day_id=day_id_int),
+        _ctx(request, grouped_areas=grouped_areas, days=days, areas=areas,
+             area_id=area_id_int, day_id=day_id_int),
     )
 
 

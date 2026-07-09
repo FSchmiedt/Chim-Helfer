@@ -14,8 +14,14 @@
 
 {% if is_admin_preview %}
 <div class="mb-6 p-3 rounded-lg bg-indigo-50 border border-indigo-300 text-indigo-900 text-sm">
-  <strong>Admin-Vorschau:</strong> der Schichtplan ist für Helfer:innen noch gesperrt
-  (SHIFT_SIGNUP_OPEN=false). Du siehst hier was sie sehen werden, sobald du freigibst.
+  {% if preview_can_book %}
+    <strong>Vorschau (Test-Zugang):</strong> der Schichtplan ist für die anderen
+    noch nicht freigegeben. Du kannst hier schon alles testen und dich probeweise
+    eintragen — deine Test-Buchungen können später wieder entfernt werden.
+  {% else %}
+    <strong>Admin-Vorschau:</strong> der Schichtplan ist für Helfer:innen noch gesperrt.
+    Du siehst hier, was sie sehen werden. Buchen ist in der Vorschau deaktiviert.
+  {% endif %}
 </div>
 {% endif %}
 
@@ -88,7 +94,7 @@
                   {% elif item.reason == 'conflict' %}
                     <span class="inline-block px-2 py-1 bg-amber-100 text-amber-700 text-xs rounded" title="zeitlicher Konflikt mit anderer Schicht von dir">Zeitkonflikt</span>
                   {% elif item.can_take %}
-                    {% if is_admin_preview %}
+                    {% if is_admin_preview and not preview_can_book %}
                       <span class="inline-block px-2 py-1 bg-slate-100 text-slate-400 text-xs rounded" title="Admin-Vorschau – nicht buchbar">frei</span>
                     {% else %}
                     <form method="post" action="/schichten/{{ s.id }}/buchen">

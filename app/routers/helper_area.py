@@ -113,10 +113,12 @@ def me_dashboard(request: Request, db: Session = Depends(get_db)):
     days = db.query(models.FestivalDay).order_by(models.FestivalDay.sort_order, models.FestivalDay.date).all()
     avail_day_ids = {a.day_id for a in helper.availabilities}
 
-    # Self-Signup-Link nur anzeigen, wenn Schichtplan freigegeben ist.
-    # (Admin-Viewer sehen ihn ebenfalls — aber Helfer:innen sind hier
-    # eingeloggt und nicht der Admin, deshalb reicht der Flag-Check.)
-    shift_signup_open = settings.SHIFT_SIGNUP_OPEN
+    # Self-Signup-Link anzeigen, wenn Schichtplan freigegeben ist (zeitgesteuert
+    # oder manuell) ODER die Person ein Test-Nutzer ist.
+    shift_signup_open = (
+        settings.shift_signup_effective_open
+        or helper.email.lower() in settings.shift_signup_preview_emails
+    )
 
     return templates.TemplateResponse(
         "helper_dashboard.html",
@@ -208,15 +210,18 @@ def shifts_signup_list(request: Request, db: Session = Depends(get_db)):
     if redir:
         return redir
 
-    # SHIFT_SIGNUP_OPEN steuert, ob Helfer:innen sich selbst eintragen dürfen.
-    # Admin sieht /schichten trotzdem (für Vorschau), Helfer:innen bekommen
-    # eine "kommt bald"-Seite, wenn der Flag noch auf false steht.
+    # Wer darf die Schichten sehen/buchen?
+    #  - Alle, wenn der Self-Signup (zeitgesteuert oder manuell) offen ist
+    #  - Admin immer (für Vorschau)
+    #  - Preview-Email-Adressen (Test-Nutzer) immer
     is_admin_viewer = is_admin(request)
-    signup_locked = (not settings.SHIFT_SIGNUP_OPEN) and (not is_admin_viewer)
-    if signup_locked:
+    is_preview_user = helper.email.lower() in settings.shift_signup_preview_emails
+    signup_open = settings.shift_signup_effective_open
+    may_view = signup_open or is_admin_viewer or is_preview_user
+    if not may_view:
         return templates.TemplateResponse(
             "helper_shifts_locked.html",
-            _ctx(request, helper),
+            _ctx(request, helper, opens_at=settings._parse_signup_open_at()),
         )
 
     # Welche Bereiche darf der Helfer:in sehen? Nur Wunschbereiche.
@@ -302,6 +307,13 @@ def shifts_signup_list(request: Request, db: Session = Depends(get_db)):
     }
     flash = flash_messages.get(flash_kind)
 
+    # Vorschau-Modus: Admin ODER Test-Nutzer sieht die Seite, obwohl der
+    # Signup öffentlich noch nicht offen ist.
+    is_preview_mode = (not signup_open) and (is_admin_viewer or is_preview_user)
+    # Test-Nutzer dürfen im Vorschau-Modus buchen (zum Testen), reine
+    # Admin-Betrachtung nicht (Admin ist nicht als Helfer:in gemeint).
+    preview_can_book = is_preview_user
+
     return templates.TemplateResponse(
         "helper_shifts_signup.html",
         _ctx(
@@ -311,7 +323,8 @@ def shifts_signup_list(request: Request, db: Session = Depends(get_db)):
             has_max=has_max,
             flash=flash,
             pref_area_ids=pref_area_ids,
-            is_admin_preview=is_admin_viewer and not settings.SHIFT_SIGNUP_OPEN,
+            is_admin_preview=is_preview_mode,
+            preview_can_book=preview_can_book,
         ),
     )
 
@@ -332,8 +345,17 @@ def shift_signup_book(shift_id: int, request: Request, db: Session = Depends(get
     if redir:
         return redir
 
-    # Sperre: Self-Signup nur, wenn der Admin sie freigeschaltet hat.
-    if not settings.SHIFT_SIGNUP_OPEN:
+    # Sperre: Self-Signup nur, wenn offen (zeitgesteuert/manuell) ODER die
+    # Person ist Test-Nutzer (Preview) bzw. Admin. Test-Nutzer dürfen bewusst
+    # buchen, damit der echte Flow testbar ist — Buchungen kann der Admin
+    # danach wieder entfernen.
+    from ..auth import is_admin
+    may_book = (
+        settings.shift_signup_effective_open
+        or is_admin(request)
+        or helper.email.lower() in settings.shift_signup_preview_emails
+    )
+    if not may_book:
         return RedirectResponse("/schichten?flash=locked", status_code=303)
 
     shift = (

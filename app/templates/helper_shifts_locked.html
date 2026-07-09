@@ -14,6 +14,12 @@
   <p class="text-slate-700">
     Wir bauen gerade den Schichtplan fertig.
   </p>
+  {% if opens_at %}
+  <p class="text-slate-600 mt-2 text-sm">
+    Freischaltung geplant für:
+    <strong>{{ opens_at.astimezone().strftime('%d.%m.%Y um %H:%M Uhr') }}</strong>
+  </p>
+  {% endif %}
   <p class="text-slate-600 mt-2 text-sm">
     Sobald die Schichten offen sind, kannst du dich hier selbst eintragen.
     Wir benachrichtigen dich per Email, sobald es so weit ist.

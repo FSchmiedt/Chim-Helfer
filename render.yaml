@@ -27,6 +27,10 @@ services:
         sync: false  # optional, leer für Default-Text
       - key: SHIFT_SIGNUP_OPEN
         value: "false"  # auf "true" setzen, wenn Helfer:innen sich selbst eintragen dürfen
+      - key: SHIFT_SIGNUP_OPEN_AT
+        sync: false  # optional: ISO-Zeitpunkt für automatische Freischaltung, z.B. 2026-07-10T14:00:00+02:00
+      - key: SHIFT_SIGNUP_PREVIEW_EMAILS
+        sync: false  # optional: Test-Nutzer (Komma-getrennt), sehen Schichten vor Freischaltung
       - key: MIN_SHIFTS
         value: "2"
       - key: MIN_DAYS

@@ -961,6 +961,96 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 proc_locked.kill()
 
+        # === Zeitgesteuerte Freischaltung + Preview-Email ===
+        print("\n=== Zeit-Freischaltung + Preview ===")
+        from datetime import datetime, timezone, timedelta
+        # (a) OPEN_AT in der Vergangenheit → sollte offen sein trotz SHIFT_SIGNUP_OPEN=false
+        past = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        env_past = env.copy()
+        env_past["SHIFT_SIGNUP_OPEN"] = "false"
+        env_past["SHIFT_SIGNUP_OPEN_AT"] = past
+        proc_past = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "app.main:app", "--port", "8768", "--log-level", "warning"],
+            cwd=ROOT, env=env_past, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            BASE_PAST = "http://127.0.0.1:8768"
+            for _ in range(30):
+                try:
+                    if httpx.get(BASE_PAST + "/", timeout=2).status_code:
+                        break
+                except httpx.ConnectError:
+                    time.sleep(0.3)
+            c_ben_past = httpx.Client(base_url=BASE_PAST, timeout=10)
+            post_form(c_ben_past, "/login", [
+                ("email", "ben@example.org"), ("password", "ben-password-2"),
+            ], follow_redirects=False)
+            r = c_ben_past.get("/schichten")
+            check("OPEN_AT in past → schedule is open",
+                  r.status_code == 200 and "Schichtplan kommt in Kürze" not in r.text)
+        finally:
+            proc_past.send_signal(signal.SIGTERM)
+            try: proc_past.wait(timeout=5)
+            except subprocess.TimeoutExpired: proc_past.kill()
+
+        # (b) OPEN_AT in der Zukunft + Preview-Email → Ben (nicht Preview) sieht
+        #     locked, Preview-Nutzer sieht die Schichten
+        future = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+        env_future = env.copy()
+        env_future["SHIFT_SIGNUP_OPEN"] = "false"
+        env_future["SHIFT_SIGNUP_OPEN_AT"] = future
+        env_future["SHIFT_SIGNUP_PREVIEW_EMAILS"] = "ben@example.org"
+        proc_future = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "app.main:app", "--port", "8769", "--log-level", "warning"],
+            cwd=ROOT, env=env_future, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            BASE_FUTURE = "http://127.0.0.1:8769"
+            for _ in range(30):
+                try:
+                    if httpx.get(BASE_FUTURE + "/", timeout=2).status_code:
+                        break
+                except httpx.ConnectError:
+                    time.sleep(0.3)
+            # Ben ist in der Preview-Liste → sieht Schichten + Vorschau-Banner
+            c_ben_fut = httpx.Client(base_url=BASE_FUTURE, timeout=10)
+            post_form(c_ben_fut, "/login", [
+                ("email", "ben@example.org"), ("password", "ben-password-2"),
+            ], follow_redirects=False)
+            r = c_ben_fut.get("/schichten")
+            check("preview user sees shifts before opening",
+                  r.status_code == 200 and "Schichtplan kommt in Kürze" not in r.text
+                  and "Test-Zugang" in r.text)
+            # Preview-Nutzer darf auch buchen
+            with eng.connect() as conn:
+                free_shift = conn.execute(sa_text(
+                    "SELECT s.id FROM shifts s "
+                    "LEFT JOIN shift_assignments sa ON sa.shift_id=s.id "
+                    "JOIN helper_area_preferences hap ON hap.area_id=s.area_id "
+                    "  AND hap.helper_id=:h AND hap.rank<5 "
+                    "GROUP BY s.id, s.capacity HAVING COUNT(sa.id) < s.capacity LIMIT 1"
+                ), {"h": ben_id}).scalar()
+            if free_shift:
+                r = c_ben_fut.post(f"/schichten/{free_shift}/buchen", follow_redirects=False)
+                check("preview user can book",
+                      "flash=taken" in r.headers.get("location", "")
+                      or "flash=already" in r.headers.get("location", ""))
+
+            # Anna ist NICHT in der Preview-Liste → sieht Locked-Seite
+            c_anna_fut = httpx.Client(base_url=BASE_FUTURE, timeout=10)
+            post_form(c_anna_fut, "/login", [
+                ("email", "anna@example.org"), ("password", "anna-pw-xxxx"),
+            ], follow_redirects=False)
+            r = c_anna_fut.get("/schichten")
+            check("non-preview user still sees locked page",
+                  r.status_code == 200 and "Schichtplan kommt in Kürze" in r.text)
+            check("  locked page shows scheduled opening time",
+                  "Freischaltung geplant" in r.text)
+        finally:
+            proc_future.send_signal(signal.SIGTERM)
+            try: proc_future.wait(timeout=5)
+            except subprocess.TimeoutExpired: proc_future.kill()
+
 
 
     finally:
