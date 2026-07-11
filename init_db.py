@@ -68,28 +68,40 @@ BACKFILLS = [
 
 
 def migrate_columns():
-    """Fügt fehlende Spalten auf bestehenden Tabellen hinzu + Backfills."""
+    """Fügt fehlende Spalten auf bestehenden Tabellen hinzu + Backfills.
+
+    Wichtig: JEDES Statement läuft in einer EIGENEN Transaktion. In Postgres
+    bricht nach einem Fehler die komplette Transaktion ab ("current transaction
+    is aborted"), sodass in einer gemeinsamen Transaktion ein einziger Fehler
+    alle nachfolgenden ALTERs mit verschluckten Folgefehlern lautlos killt –
+    und nichts committet würde. Pro-Statement-Transaktionen isolieren Fehler.
+    """
     inspector = inspect(engine)
-    with engine.begin() as conn:
-        for table, cols in NEW_COLUMNS_BY_TABLE.items():
-            if table not in inspector.get_table_names():
+    table_names = set(inspector.get_table_names())
+
+    for table, cols in NEW_COLUMNS_BY_TABLE.items():
+        if table not in table_names:
+            continue
+        existing = {c["name"] for c in inspector.get_columns(table)}
+        for col_name, col_type in cols:
+            if col_name in existing:
                 continue
-            existing = {c["name"] for c in inspector.get_columns(table)}
-            for col_name, col_type in cols:
-                if col_name in existing:
-                    continue
-                try:
+            try:
+                with engine.begin() as conn:  # eigene Transaktion pro Spalte
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}"))
-                    print(f"  + Spalte {table}.{col_name} ergänzt")
-                except Exception as exc:  # noqa: BLE001
-                    print(f"  ! Spalte {table}.{col_name} konnte nicht ergänzt werden: {exc}")
-        # Backfill-Queries (idempotent): setzen NULL auf definierten Wert.
-        for table, sql in BACKFILLS:
-            if table in inspector.get_table_names():
-                try:
-                    conn.execute(text(sql))
-                except Exception as exc:  # noqa: BLE001
-                    print(f"  ! Backfill auf {table} fehlgeschlagen: {exc}")
+                print(f"  + Spalte {table}.{col_name} ergänzt")
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ! Spalte {table}.{col_name} konnte nicht ergänzt werden: {exc}")
+
+    # Backfill-Queries (idempotent): setzen NULL auf definierten Wert.
+    for table, sql in BACKFILLS:
+        if table not in table_names:
+            continue
+        try:
+            with engine.begin() as conn:  # eigene Transaktion pro Backfill
+                conn.execute(text(sql))
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ! Backfill auf {table} fehlgeschlagen: {exc}")
 
 
 def seed_areas_and_roles(db):
