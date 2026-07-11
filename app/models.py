@@ -221,10 +221,17 @@ class ShiftAssignment(Base):
 # Schichttausch
 # ---------------------------------------------------------------------------
 class ShiftSwapOffer(Base):
-    """Eine Schicht wird öffentlich aufs Board gestellt.
+    """Eine Schicht wird öffentlich aufs Board gestellt – für einen 1:1-Tausch.
 
-    Das Aufs-Board-Stellen IST die Zustimmung der anbietenden Person – wer
-    übernimmt, akzeptiert direkt, kein zweiter Schritt.
+    Person A stellt ihre Schicht rein und gibt an, welche Gegenschicht(en) sie
+    im Tausch akzeptiert:
+      - "day": jede Schicht, die an `wanted_day_id` beginnt
+      - "shifts": nur die konkret in `wanted_shifts` angehakten Schichten
+    Optional erlaubt A auch eine reine Übernahme ohne Gegenschicht
+    (`allow_giveaway`).
+
+    Person B übernimmt, indem sie (bei 1:1) eine ihrer passenden Schichten
+    hergibt – oder (bei giveaway) gar keine.
     """
     __tablename__ = "shift_swap_offers"
 
@@ -237,15 +244,50 @@ class ShiftSwapOffer(Base):
     message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="open", index=True)
     # open | taken | cancelled
+
+    # Tausch-Präferenz von A:
+    #   want_type = "day"    -> wanted_day_id gesetzt, jede Schicht an dem Tag ok
+    #   want_type = "shifts" -> wanted_shifts enthält die konkreten Wunschschichten
+    want_type: Mapped[str] = mapped_column(String(10), default="day")  # "day" | "shifts"
+    wanted_day_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("festival_days.id", ondelete="CASCADE"), nullable=True
+    )
+    # Erlaubt A zusätzlich, dass jemand die Schicht einfach nur übernimmt
+    # (ohne im Gegenzug eine Schicht abzugeben).
+    allow_giveaway: Mapped[bool] = mapped_column(Boolean, default=False)
+
     taken_by_helper_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("helpers.id", ondelete="SET NULL"), nullable=True
+    )
+    # Welche Schicht B im Gegenzug abgegeben hat (NULL bei reiner Übernahme).
+    taken_with_assignment_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("shift_assignments.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
-    assignment: Mapped["ShiftAssignment"] = relationship()
+    assignment: Mapped["ShiftAssignment"] = relationship(foreign_keys=[assignment_id])
     offered_by: Mapped["Helper"] = relationship(foreign_keys=[offered_by_helper_id])
     taken_by: Mapped[Optional["Helper"]] = relationship(foreign_keys=[taken_by_helper_id])
+    wanted_day: Mapped[Optional["FestivalDay"]] = relationship()
+    wanted_shifts: Mapped[list["ShiftSwapOfferWantedShift"]] = relationship(
+        back_populates="offer", cascade="all, delete-orphan"
+    )
+
+
+class ShiftSwapOfferWantedShift(Base):
+    """Konkrete Wunschschicht eines Board-Angebots (bei want_type='shifts')."""
+    __tablename__ = "shift_swap_offer_wanted_shifts"
+    __table_args__ = (
+        UniqueConstraint("offer_id", "shift_id", name="uq_offer_wanted_shift"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    offer_id: Mapped[int] = mapped_column(ForeignKey("shift_swap_offers.id", ondelete="CASCADE"))
+    shift_id: Mapped[int] = mapped_column(ForeignKey("shifts.id", ondelete="CASCADE"))
+
+    offer: Mapped["ShiftSwapOffer"] = relationship(back_populates="wanted_shifts")
+    shift: Mapped["Shift"] = relationship()
 
 
 class ShiftSwapRequest(Base):

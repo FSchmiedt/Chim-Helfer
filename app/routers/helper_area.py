@@ -132,6 +132,7 @@ def me_dashboard(request: Request, db: Session = Depends(get_db)):
             days=days,
             avail_day_ids=avail_day_ids,
             shift_signup_open=shift_signup_open,
+            swap_excluded_areas=settings.swap_excluded_areas,
         ),
     )
 
@@ -253,6 +254,10 @@ def shifts_signup_list(request: Request, db: Session = Depends(get_db)):
         n_assigned = len(s.assignments)
         is_free = n_assigned < s.capacity
         already_mine = any(a.shift_id == s.id for a in my_assignments)
+        # Volle Schichten gar nicht erst anzeigen – außer der Helfer:in ist
+        # selbst dabei, dann bleibt die Schicht mit „du bist dabei" sichtbar.
+        if not is_free and not already_mine:
+            continue
         can_take, reason = _can_helper_take_shift_for_signup(
             helper, s, avail_day_ids, my_assignments,
         )
@@ -447,19 +452,181 @@ def _can_helper_take_shift_for_signup(
 
 
 # ---------------------------------------------------------------------------
+# Selbst aus einer Schicht austragen (ohne Tausch)
+# ---------------------------------------------------------------------------
+@router.post("/me/assignments/{assignment_id}/withdraw")
+def me_withdraw_assignment(assignment_id: int, request: Request, db: Session = Depends(get_db)):
+    """Helfer:in trägt sich selbst aus einer Schicht aus – ohne Tausch.
+
+    Nicht erlaubt für ausgeschlossene Bereiche (Bar): diese Schichten werden
+    ausschließlich über den Tausch vom Orga-Team umverteilt, nicht einfach
+    freigegeben. Für alle anderen Bereiche wird die Zuweisung gelöscht und die
+    Schicht damit wieder frei für andere.
+    """
+    redir, helper = require_helper_redirect(request, db)
+    if redir:
+        return redir
+
+    assignment = (
+        db.query(models.ShiftAssignment)
+        .filter(models.ShiftAssignment.id == assignment_id)
+        .options(joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area))
+        .one_or_none()
+    )
+    if not assignment or assignment.helper_id != helper.id:
+        return RedirectResponse("/me?error=not_your_assignment", status_code=303)
+
+    # Bar (bzw. andere ausgeschlossene Bereiche) darf man nicht selbst austragen.
+    if _area_is_swap_excluded(assignment.shift.area):
+        return RedirectResponse("/me?error=withdraw_excluded", status_code=303)
+
+    # Offene Board-Angebote und ausgehende Tausch-Anfragen zu genau dieser
+    # Schicht aufräumen, damit keine ins Leere zeigenden Einträge übrig bleiben.
+    db.query(models.ShiftSwapOffer).filter(
+        models.ShiftSwapOffer.assignment_id == assignment_id
+    ).delete(synchronize_session=False)
+    db.query(models.ShiftSwapRequest).filter(
+        models.ShiftSwapRequest.from_assignment_id == assignment_id
+    ).delete(synchronize_session=False)
+
+    db.delete(assignment)
+    db.commit()
+    return RedirectResponse("/me?withdrawn=1", status_code=303)
+
+
+# ---------------------------------------------------------------------------
 # Schicht aufs Board stellen / zurückziehen
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Tausch-Matching-Logik
+# ---------------------------------------------------------------------------
+def _area_is_swap_excluded(area) -> bool:
+    return area.name.strip().lower() in settings.swap_excluded_areas
+
+
+def _offer_matching_assignments(offer, candidate_assignments):
+    """Welche der `candidate_assignments` (von Person B) passen zu A's Angebot?
+
+    Regeln:
+      - want_type "day": B-Schicht muss am gewünschten Tag beginnen
+      - want_type "shifts": B-Schicht muss eine der angehakten Wunschschichten sein
+      - ausgeschlossene Bereiche (Bar) werden nie als Gegenschicht akzeptiert
+      - die B-Schicht darf nicht dieselbe sein wie A's angebotene Schicht
+    Gibt die Liste der passenden Assignments zurück.
+    """
+    offered_shift_id = offer.assignment.shift_id
+    matches = []
+    if offer.want_type == "day":
+        for a in candidate_assignments:
+            if a.shift_id == offered_shift_id:
+                continue
+            if _area_is_swap_excluded(a.shift.area):
+                continue
+            if a.shift.day_id == offer.wanted_day_id:
+                matches.append(a)
+    else:  # "shifts"
+        wanted_ids = {w.shift_id for w in offer.wanted_shifts}
+        for a in candidate_assignments:
+            if a.shift_id == offered_shift_id:
+                continue
+            if _area_is_swap_excluded(a.shift.area):
+                continue
+            if a.shift_id in wanted_ids:
+                matches.append(a)
+    return matches
+
+
+# ---------------------------------------------------------------------------
+# Schicht aufs Board stellen: Formular + Anlegen
+# ---------------------------------------------------------------------------
+@router.get("/me/assignments/{assignment_id}/offer", response_class=HTMLResponse)
+def me_offer_form(assignment_id: int, request: Request, db: Session = Depends(get_db)):
+    redir, helper = require_helper_redirect(request, db)
+    if redir:
+        return redir
+
+    assignment = (
+        db.query(models.ShiftAssignment)
+        .filter(models.ShiftAssignment.id == assignment_id)
+        .options(
+            joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area),
+            joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.day),
+        )
+        .one_or_none()
+    )
+    if not assignment or assignment.helper_id != helper.id:
+        return RedirectResponse("/me?error=not_your_assignment", status_code=303)
+
+    # Bar (o.a.) darf nicht aufs Board.
+    if _area_is_swap_excluded(assignment.shift.area):
+        return RedirectResponse("/me?error=area_excluded", status_code=303)
+
+    # Bereits ein offenes Angebot?
+    existing = (
+        db.query(models.ShiftSwapOffer)
+        .filter(models.ShiftSwapOffer.assignment_id == assignment_id)
+        .filter(models.ShiftSwapOffer.status == "open")
+        .one_or_none()
+    )
+    if existing:
+        return RedirectResponse("/me", status_code=303)
+
+    days = db.query(models.FestivalDay).order_by(
+        models.FestivalDay.sort_order, models.FestivalDay.date
+    ).all()
+
+    # Für "genau diese Schichten": alle Schichten anbieten, gruppiert nach
+    # Tag, ohne ausgeschlossene Bereiche und ohne A's eigene Schicht.
+    excluded = settings.swap_excluded_areas
+    all_shifts = (
+        db.query(models.Shift)
+        .options(joinedload(models.Shift.area), joinedload(models.Shift.day))
+        .all()
+    )
+    selectable = [
+        s for s in all_shifts
+        if s.area.name.strip().lower() not in excluded
+        and s.id != assignment.shift_id
+    ]
+    # Gruppieren nach Tag, dann Startzeit
+    day_order = {d.id: i for i, d in enumerate(days)}
+    shifts_by_day: dict[int, list] = {}
+    for s in selectable:
+        shifts_by_day.setdefault(s.day_id, []).append(s)
+    for lst in shifts_by_day.values():
+        lst.sort(key=lambda s: (s.area.sort_order, s.start_time))
+    ordered_days = sorted(shifts_by_day.keys(), key=lambda did: day_order.get(did, 99))
+
+    return templates.TemplateResponse(
+        "helper_offer_form.html",
+        _ctx(
+            request, helper,
+            assignment=assignment,
+            days=days,
+            shifts_by_day=shifts_by_day,
+            ordered_day_ids=ordered_days,
+        ),
+    )
+
+
 @router.post("/me/assignments/{assignment_id}/offer")
 async def me_offer_shift(assignment_id: int, request: Request, db: Session = Depends(get_db)):
     redir, helper = require_helper_redirect(request, db)
     if redir:
         return redir
 
-    assignment = db.get(models.ShiftAssignment, assignment_id)
+    assignment = (
+        db.query(models.ShiftAssignment)
+        .filter(models.ShiftAssignment.id == assignment_id)
+        .options(joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area))
+        .one_or_none()
+    )
     if not assignment or assignment.helper_id != helper.id:
         return RedirectResponse("/me?error=not_your_assignment", status_code=303)
 
-    # Gibt es bereits ein offenes Angebot für diese Zuweisung?
+    if _area_is_swap_excluded(assignment.shift.area):
+        return RedirectResponse("/me?error=area_excluded", status_code=303)
+
     existing = (
         db.query(models.ShiftSwapOffer)
         .filter(models.ShiftSwapOffer.assignment_id == assignment_id)
@@ -471,14 +638,61 @@ async def me_offer_shift(assignment_id: int, request: Request, db: Session = Dep
 
     form = await request.form()
     message = (form.get("message") or "").strip() or None
+    want_type = form.get("want_type") or "day"
+    allow_giveaway = form.get("allow_giveaway") == "on"
 
     offer = models.ShiftSwapOffer(
         assignment_id=assignment_id,
         offered_by_helper_id=helper.id,
         message=message,
         status="open",
+        want_type=want_type if want_type in ("day", "shifts") else "day",
+        allow_giveaway=allow_giveaway,
     )
+
+    if offer.want_type == "day":
+        try:
+            offer.wanted_day_id = int(form.get("wanted_day_id") or 0) or None
+        except ValueError:
+            offer.wanted_day_id = None
+        # Validierung: Tag muss existieren
+        if not offer.wanted_day_id:
+            return RedirectResponse(
+                f"/me/assignments/{assignment_id}/offer?error=no_day", status_code=303
+            )
+    else:  # "shifts"
+        raw_ids = form.getlist("wanted_shift_ids")
+        wanted_ids = []
+        for x in raw_ids:
+            try:
+                wanted_ids.append(int(x))
+            except ValueError:
+                continue
+        if not wanted_ids and not allow_giveaway:
+            # Keine Wunschschicht + kein Giveaway = sinnloses Angebot
+            return RedirectResponse(
+                f"/me/assignments/{assignment_id}/offer?error=no_shifts", status_code=303
+            )
+
     db.add(offer)
+    db.flush()
+
+    if offer.want_type == "shifts":
+        # Wunschschichten anlegen (ausgeschlossene Bereiche rausfiltern)
+        excluded = settings.swap_excluded_areas
+        valid_shifts = (
+            db.query(models.Shift)
+            .filter(models.Shift.id.in_(wanted_ids))
+            .options(joinedload(models.Shift.area))
+            .all()
+        )
+        for s in valid_shifts:
+            if s.area.name.strip().lower() in excluded:
+                continue
+            if s.id == assignment.shift_id:
+                continue
+            db.add(models.ShiftSwapOfferWantedShift(offer_id=offer.id, shift_id=s.id))
+
     db.commit()
     return RedirectResponse("/me", status_code=303)
 
@@ -516,22 +730,40 @@ def board(request: Request, db: Session = Depends(get_db)):
             joinedload(models.ShiftSwapOffer.assignment).joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area),
             joinedload(models.ShiftSwapOffer.assignment).joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.day),
             joinedload(models.ShiftSwapOffer.assignment).joinedload(models.ShiftAssignment.role),
+            joinedload(models.ShiftSwapOffer.wanted_day),
+            joinedload(models.ShiftSwapOffer.wanted_shifts).joinedload(models.ShiftSwapOfferWantedShift.shift).joinedload(models.Shift.area),
+            joinedload(models.ShiftSwapOffer.wanted_shifts).joinedload(models.ShiftSwapOfferWantedShift.shift).joinedload(models.Shift.day),
         )
         .order_by(models.ShiftSwapOffer.created_at.desc())
         .all()
     )
-    # Eigene Angebote vom Board trennen (nicht übernehmbar)
     foreign_offers = [o for o in offers if o.offered_by_helper_id != helper.id]
     own_offers = [o for o in offers if o.offered_by_helper_id == helper.id]
 
-    # Für jedes Angebot prüfen, ob der aktuelle Helfer es übernehmen kann
-    takeable_flags: dict[int, tuple[bool, str]] = {}
-    avail_day_ids = {a.day_id for a in helper.availabilities}
-    my_other_assignments = [a for a in helper.shift_assignments]
-    for off in foreign_offers:
-        takeable_flags[off.id] = _can_helper_take_shift(
-            helper, off.assignment, avail_day_ids, my_other_assignments,
+    # Meine eigenen Schichten (als mögliche Gegenschichten), mit geladenen shifts
+    my_assignments = (
+        db.query(models.ShiftAssignment)
+        .filter(models.ShiftAssignment.helper_id == helper.id)
+        .options(
+            joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area),
+            joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.day),
         )
+        .all()
+    )
+
+    # Pro fremdem Angebot: welche meiner Schichten passen als Gegenschicht?
+    # + kann ich A's Schicht überhaupt zeitlich nehmen (kein Konflikt)?
+    offer_options: dict[int, dict] = {}
+    avail_day_ids = {a.day_id for a in helper.availabilities}
+    for off in foreign_offers:
+        # Passt A's Schicht in meinen Plan? (Zeitkonflikt-Check gegen die
+        # Schichten, die ich BEHALTE — vereinfachend prüfen wir gegen alle;
+        # die Gegenschicht, die ich abgebe, wird beim Take ausgenommen.)
+        matching = _offer_matching_assignments(off, my_assignments)
+        offer_options[off.id] = {
+            "matching": matching,          # meine abgebbaren Schichten
+            "can_giveaway": off.allow_giveaway,
+        }
 
     return templates.TemplateResponse(
         "helper_board.html",
@@ -539,13 +771,13 @@ def board(request: Request, db: Session = Depends(get_db)):
             request, helper,
             foreign_offers=foreign_offers,
             own_offers=own_offers,
-            takeable_flags=takeable_flags,
+            offer_options=offer_options,
         ),
     )
 
 
 @router.post("/board/{offer_id}/take")
-def board_take(offer_id: int, request: Request, db: Session = Depends(get_db)):
+async def board_take(offer_id: int, request: Request, db: Session = Depends(get_db)):
     redir, helper = require_helper_redirect(request, db)
     if redir:
         return redir
@@ -554,7 +786,8 @@ def board_take(offer_id: int, request: Request, db: Session = Depends(get_db)):
         db.query(models.ShiftSwapOffer)
         .filter(models.ShiftSwapOffer.id == offer_id)
         .options(
-            joinedload(models.ShiftSwapOffer.assignment).joinedload(models.ShiftAssignment.shift),
+            joinedload(models.ShiftSwapOffer.assignment).joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area),
+            joinedload(models.ShiftSwapOffer.wanted_shifts),
         )
         .one_or_none()
     )
@@ -563,46 +796,96 @@ def board_take(offer_id: int, request: Request, db: Session = Depends(get_db)):
     if offer.offered_by_helper_id == helper.id:
         return RedirectResponse("/board?error=own_offer", status_code=303)
 
-    avail_day_ids = {a.day_id for a in helper.availabilities}
-    can, reason = _can_helper_take_shift(
-        helper, offer.assignment, avail_day_ids, list(helper.shift_assignments),
+    form = await request.form()
+    give_raw = (form.get("give_assignment_id") or "").strip()
+
+    # Meine Schichten laden
+    my_assignments = (
+        db.query(models.ShiftAssignment)
+        .filter(models.ShiftAssignment.helper_id == helper.id)
+        .options(
+            joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area),
+            joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.day),
+        )
+        .all()
     )
-    if not can:
-        return RedirectResponse(f"/board?error={reason}", status_code=303)
+    matching = _offer_matching_assignments(offer, my_assignments)
 
-    # Assignment transferieren; role_id bleibt unverändert.
-    assignment = offer.assignment
-    old_helper_id = assignment.helper_id
-    assignment.helper_id = helper.id
+    give_assignment = None
+    if give_raw and give_raw != "giveaway":
+        try:
+            give_id = int(give_raw)
+        except ValueError:
+            return RedirectResponse("/board?error=bad_choice", status_code=303)
+        # Muss eine meiner passenden Schichten sein
+        give_assignment = next((a for a in matching if a.id == give_id), None)
+        if not give_assignment:
+            return RedirectResponse("/board?error=no_match", status_code=303)
+    else:
+        # Giveaway gewählt (oder nichts) — nur erlaubt, wenn A das zulässt
+        if not offer.allow_giveaway:
+            # 1:1-Pflicht: wenn keine passende Schicht existiert, Fehlermeldung
+            if not matching:
+                return RedirectResponse("/board?error=need_match", status_code=303)
+            return RedirectResponse("/board?error=choose_shift", status_code=303)
 
-    # Offer abschließen
+    a_assignment = offer.assignment  # A's Schicht, geht an mich (B)
+    avail_day_ids = {a.day_id for a in helper.availabilities}
+
+    # Zeitkonflikt-Prüfung: A's Schicht darf sich nicht mit meinen Schichten
+    # überschneiden – außer mit der, die ich gerade abgebe.
+    keep = [a for a in my_assignments if not (give_assignment and a.id == give_assignment.id)]
+    for other in keep:
+        if other.shift.day_id != a_assignment.shift.day_id:
+            continue
+        if _times_overlap(other.shift.start_time, other.shift.end_time,
+                          a_assignment.shift.start_time, a_assignment.shift.end_time):
+            return RedirectResponse("/board?error=conflict", status_code=303)
+
+    # --- Tausch durchführen ---
+    old_a_helper_id = a_assignment.helper_id  # = A
+    # A's Schicht kommt zu mir (B)
+    a_assignment.helper_id = helper.id
+    # meine Gegenschicht (falls vorhanden) geht an A
+    if give_assignment:
+        give_assignment.helper_id = old_a_helper_id
+        offer.taken_with_assignment_id = give_assignment.id
+        # A war evtl. nicht als an dem Tag verfügbar markiert
+        gday = give_assignment.shift.day_id
+        a_avail = {av.day_id for av in db.get(models.Helper, old_a_helper_id).availabilities}
+        if gday not in a_avail:
+            db.add(models.Availability(helper_id=old_a_helper_id, day_id=gday))
+
     offer.status = "taken"
     offer.taken_by_helper_id = helper.id
     offer.resolved_at = datetime.utcnow()
 
-    # Falls der Übernehmer den Tag noch nicht als verfügbar markiert hatte,
-    # fügen wir ihn stillschweigend hinzu. Wer freiwillig eine Schicht am Tag
-    # X übernimmt, IST an Tag X verfügbar.
-    day_id = assignment.shift.day_id
-    if day_id not in avail_day_ids:
-        db.add(models.Availability(helper_id=helper.id, day_id=day_id))
+    # Ich (B) bin am Tag von A's Schicht jetzt verfügbar
+    if a_assignment.shift.day_id not in avail_day_ids:
+        db.add(models.Availability(helper_id=helper.id, day_id=a_assignment.shift.day_id))
 
-    # Alle anderen offenen Requests auf diese Assignment abbrechen — der
-    # ursprüngliche Besitzer gibt sie ja gerade weg.
+    # Andere offene Requests/Offers auf die getauschten Assignments abbrechen
+    involved = [a_assignment.id] + ([give_assignment.id] if give_assignment else [])
     db.query(models.ShiftSwapRequest).filter(
-        models.ShiftSwapRequest.from_assignment_id == assignment.id,
+        models.ShiftSwapRequest.from_assignment_id.in_(involved),
         models.ShiftSwapRequest.status == "pending",
-    ).update({"status": "cancelled", "resolved_at": datetime.utcnow()})
+    ).update({"status": "cancelled", "resolved_at": datetime.utcnow()}, synchronize_session=False)
+    if give_assignment:
+        # Falls B seine Gegenschicht selbst auch aufs Board gestellt hatte
+        db.query(models.ShiftSwapOffer).filter(
+            models.ShiftSwapOffer.assignment_id == give_assignment.id,
+            models.ShiftSwapOffer.status == "open",
+        ).update({"status": "cancelled", "resolved_at": datetime.utcnow()}, synchronize_session=False)
 
     db.commit()
 
-    # Optional: Mail an ursprünglichen Besitzer
+    # Mail an A
     if settings.smtp_enabled:
         try:
             from ..email_sender import send_swap_taken_email
-            old_helper = db.get(models.Helper, old_helper_id)
+            old_helper = db.get(models.Helper, old_a_helper_id)
             if old_helper:
-                send_swap_taken_email(old_helper, helper, assignment)
+                send_swap_taken_email(old_helper, helper, a_assignment)
         except Exception as exc:  # noqa: BLE001
             print(f"[board_take] SMTP-Fehler: {exc}")
 

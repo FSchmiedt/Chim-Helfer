@@ -884,6 +884,144 @@ def shift_unassign(shift_id: int, helper_id: int, request: Request, db: Session 
 
 
 # ---------------------------------------------------------------------------
+# Admin: Schichten zwischen zwei Helfer:innen manuell tauschen
+# (v.a. für Bar, die vom Self-Service-Board ausgeschlossen ist)
+# ---------------------------------------------------------------------------
+@router.get("/swap", response_class=HTMLResponse)
+def admin_swap_page(request: Request, db: Session = Depends(get_db)):
+    if (r := require_admin_redirect(request)):
+        return r
+
+    # Alle Helfer:innen mit mindestens einer Zuweisung, plus deren Schichten.
+    helpers = (
+        db.query(models.Helper)
+        .options(
+            joinedload(models.Helper.shift_assignments)
+            .joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area),
+            joinedload(models.Helper.shift_assignments)
+            .joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.day),
+        )
+        .order_by(models.Helper.last_name, models.Helper.first_name)
+        .all()
+    )
+    # Nur Helfer:innen mit Zuweisungen sind tauschbar.
+    helpers_with_shifts = [h for h in helpers if h.shift_assignments]
+
+    # Als JSON-freundliche Struktur fürs Template: pro Helfer die Assignments.
+    def assignment_label(a):
+        s = a.shift
+        return f"{s.area.name} · {s.day.label} · {s.time_range}" + (f" · {s.label}" if s.label else "")
+
+    helper_data = []
+    for h in helpers_with_shifts:
+        helper_data.append({
+            "id": h.id,
+            "name": f"{h.first_name} {h.last_name}",
+            "assignments": [
+                {"id": a.id, "label": assignment_label(a)}
+                for a in sorted(h.shift_assignments, key=lambda a: (a.shift.day.sort_order, a.shift.start_time))
+            ],
+        })
+
+    import json as _json
+    flash = request.query_params.get("flash")
+    flash_map = {
+        "swapped": ("success", "Schichten erfolgreich getauscht."),
+        "same_helper": ("error", "Bitte zwei verschiedene Helfer:innen wählen."),
+        "missing": ("error", "Bitte für beide Seiten eine Schicht auswählen."),
+        "not_found": ("error", "Eine der Zuweisungen wurde nicht gefunden."),
+        "conflict": ("error", "Tausch nicht möglich: es entstünde ein zeitlicher Konflikt."),
+    }
+    flash_data = flash_map.get(flash)
+
+    return templates.TemplateResponse(
+        "admin/swap.html",
+        _ctx(
+            request,
+            helper_data=helper_data,
+            helper_data_json=_json.dumps(helper_data),
+            flash=flash_data,
+        ),
+    )
+
+
+@router.post("/swap")
+async def admin_swap_do(request: Request, db: Session = Depends(get_db)):
+    if (r := require_admin_redirect(request)):
+        return r
+    form = await request.form()
+
+    def _int(name):
+        try:
+            return int(form.get(name) or 0) or None
+        except ValueError:
+            return None
+
+    assign_a_id = _int("assignment_a")
+    assign_b_id = _int("assignment_b")
+
+    if not assign_a_id or not assign_b_id:
+        return RedirectResponse("/admin/swap?flash=missing", status_code=303)
+    if assign_a_id == assign_b_id:
+        return RedirectResponse("/admin/swap?flash=missing", status_code=303)
+
+    a = (
+        db.query(models.ShiftAssignment)
+        .filter(models.ShiftAssignment.id == assign_a_id)
+        .options(joinedload(models.ShiftAssignment.shift))
+        .one_or_none()
+    )
+    b = (
+        db.query(models.ShiftAssignment)
+        .filter(models.ShiftAssignment.id == assign_b_id)
+        .options(joinedload(models.ShiftAssignment.shift))
+        .one_or_none()
+    )
+    if not a or not b:
+        return RedirectResponse("/admin/swap?flash=not_found", status_code=303)
+    if a.helper_id == b.helper_id:
+        return RedirectResponse("/admin/swap?flash=same_helper", status_code=303)
+
+    # Tausch: die beiden Helfer:innen wechseln ihre Schichten.
+    helper_a_id = a.helper_id
+    helper_b_id = b.helper_id
+
+    # Konfliktprüfung: Bekommt A (der jetzt B's Schicht kriegt) einen Zeitkonflikt
+    # mit einer seiner ANDEREN Schichten? Und umgekehrt.
+    def _has_conflict(helper_id, new_shift, own_assignment_id):
+        others = (
+            db.query(models.ShiftAssignment)
+            .filter(models.ShiftAssignment.helper_id == helper_id)
+            .filter(models.ShiftAssignment.id != own_assignment_id)
+            .options(joinedload(models.ShiftAssignment.shift))
+            .all()
+        )
+        for o in others:
+            if o.shift.day_id != new_shift.day_id:
+                continue
+            if (o.shift.start_time < new_shift.end_time
+                    and new_shift.start_time < o.shift.end_time):
+                return True
+        return False
+
+    # A bekommt b.shift, B bekommt a.shift
+    if _has_conflict(helper_a_id, b.shift, a.id) or _has_conflict(helper_b_id, a.shift, b.id):
+        return RedirectResponse("/admin/swap?flash=conflict", status_code=303)
+
+    a.helper_id, b.helper_id = helper_b_id, helper_a_id
+
+    # Verfügbarkeiten defensiv ergänzen
+    for hid, shift in ((helper_b_id, a.shift), (helper_a_id, b.shift)):
+        h = db.get(models.Helper, hid)
+        avail = {av.day_id for av in h.availabilities}
+        if shift.day_id not in avail:
+            db.add(models.Availability(helper_id=hid, day_id=shift.day_id))
+
+    db.commit()
+    return RedirectResponse("/admin/swap?flash=swapped", status_code=303)
+
+
+# ---------------------------------------------------------------------------
 # Stammdaten (Tage, Bereiche, Rollen)
 # ---------------------------------------------------------------------------
 @router.get("/config", response_class=HTMLResponse)

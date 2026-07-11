@@ -460,12 +460,14 @@ def main() -> int:
             ben_id = conn.execute(sa_text("SELECT id FROM helpers WHERE email='ben@example.org'")).scalar()
             anna_id = conn.execute(sa_text("SELECT id FROM helpers WHERE email='anna@example.org'")).scalar()
 
-        # Eine zweite Schicht am Samstag anlegen
+        # Eine zweite Schicht am Samstag anlegen — NICHT in Bar, weil Bar vom
+        # Tausch ausgeschlossen ist. Wir nutzen Einlass für die Board-Tests.
+        with eng.connect() as conn:
+            einlass_area_id = conn.execute(sa_text("SELECT id FROM areas WHERE name='Einlass'")).scalar()
         r = c_admin.post("/admin/shifts/new", data={
-            "area_id": str(bar_area_id),
+            "area_id": str(einlass_area_id),
             "day_id": str(day_ids[2]),  # Samstag
-            "label": "Hauptbar Sa",
-            "start_time": "20:00", "end_time": "23:00", "capacity": "2",
+            "label": "Einlass Sa", "start_time": "20:00", "end_time": "23:00", "capacity": "2",
         }, follow_redirects=False)
         with eng.connect() as conn:
             shift2_id = conn.execute(sa_text("SELECT id FROM shifts ORDER BY id DESC LIMIT 1")).scalar()
@@ -491,12 +493,20 @@ def main() -> int:
                 "SELECT id FROM shift_assignments WHERE helper_id=:h AND shift_id=:s"
             ), {"h": ben_id, "s": shift2_id}).scalar()
 
-        # Ben logged in, stellt Schicht aufs Board
+        # Ben logged in, stellt Schicht aufs Board.
+        # Neues Modell: Ben erlaubt hier die reine Übernahme (allow_giveaway),
+        # damit Anna ohne Gegenschicht übernehmen kann. want_type=day mit
+        # irgendeinem Tag ist Pflichtfeld, spielt aber bei giveaway keine Rolle
+        # fürs Übernehmen.
         r = post_form(c_ben2, "/login", [
             ("email", "ben@example.org"), ("password", "ben-password-2"), ("next", "/me"),
         ], follow_redirects=True)
+        with eng.connect() as conn:
+            some_day = conn.execute(sa_text("SELECT id FROM festival_days ORDER BY sort_order LIMIT 1")).scalar()
         r = post_form(c_ben2, f"/me/assignments/{ben_assign_id}/offer",
-                      [("message", "Kann leider nicht mehr.")], follow_redirects=False)
+                      [("message", "Kann leider nicht mehr."),
+                       ("want_type", "day"), ("wanted_day_id", str(some_day)),
+                       ("allow_giveaway", "on")], follow_redirects=False)
         check("Ben offers shift on board", r.status_code == 303)
 
         # Board anschauen (als Ben selbst → eigenes Angebot im 'own' Abschnitt)
@@ -556,7 +566,8 @@ def main() -> int:
             offer_id = conn.execute(sa_text(
                 "SELECT id FROM shift_swap_offers WHERE assignment_id=:a AND status='open'"
             ), {"a": ben_assign_id}).scalar()
-        r = c_anna.post(f"/board/{offer_id}/take", follow_redirects=False)
+        r = c_anna.post(f"/board/{offer_id}/take",
+                        data={"give_assignment_id": "giveaway"}, follow_redirects=False)
         check("Anna takes Ben's board offer", r.status_code == 303)
 
         # Assignment gehört jetzt Anna
@@ -632,9 +643,142 @@ def main() -> int:
             ), {"i": anna_fri_assign}).scalar()
         check("swap: shift now belongs to Ben", new_owner2 == ben_id, f"owner={new_owner2}, expected={ben_id}")
 
+        # === Echter 1:1-Tausch (mit Gegenschicht) ===
+        # Self-contained: eigene frische Schichten, stört keine anderen Tests.
+        print("\n=== 1:1-Tausch (Board) ===")
+        c_admin.post("/admin/shifts/new", data={
+            "area_id": str(einlass_area_id), "day_id": str(day_ids[1]),  # Fr
+            "label": "Swap-Ben-Fr", "start_time": "09:00", "end_time": "12:00", "capacity": "1",
+        }, follow_redirects=False)
+        so_day = day_ids[3] if len(day_ids) > 3 else day_ids[2]
+        c_admin.post("/admin/shifts/new", data={
+            "area_id": str(einlass_area_id), "day_id": str(so_day),
+            "label": "Swap-Anna-So", "start_time": "09:00", "end_time": "12:00", "capacity": "1",
+        }, follow_redirects=False)
+        with eng.connect() as conn:
+            sb = conn.execute(sa_text("SELECT id FROM shifts WHERE label='Swap-Ben-Fr'")).scalar()
+            sa_ = conn.execute(sa_text("SELECT id FROM shifts WHERE label='Swap-Anna-So'")).scalar()
+            swap_day = conn.execute(sa_text("SELECT day_id FROM shifts WHERE id=:i"), {"i": sa_}).scalar()
+        c_admin.post(f"/admin/shifts/{sb}/assign", data={"helper_id": str(ben_id), "role_id": ""}, follow_redirects=False)
+        c_admin.post(f"/admin/shifts/{sa_}/assign", data={"helper_id": str(anna_id), "role_id": ""}, follow_redirects=False)
+        with eng.connect() as conn:
+            ben_swap_assign = conn.execute(sa_text(
+                "SELECT id FROM shift_assignments WHERE helper_id=:h AND shift_id=:s"), {"h": ben_id, "s": sb}).scalar()
+            anna_swap_assign = conn.execute(sa_text(
+                "SELECT id FROM shift_assignments WHERE helper_id=:h AND shift_id=:s"), {"h": anna_id, "s": sa_}).scalar()
+
+        r = post_form(c_ben2, f"/me/assignments/{ben_swap_assign}/offer",
+                      [("want_type", "day"), ("wanted_day_id", str(swap_day))], follow_redirects=False)
+        check("Ben offers with day-preference (no giveaway)", r.status_code == 303)
+        with eng.connect() as conn:
+            swap_offer_id = conn.execute(sa_text(
+                "SELECT id FROM shift_swap_offers WHERE assignment_id=:a AND status='open'"),
+                {"a": ben_swap_assign}).scalar()
+        check("  1:1 offer created", swap_offer_id is not None)
+
+        r = c_anna.get("/board")
+        check("Anna sees 1:1 offer with Tauschen button", "Tauschen" in r.text)
+
+        r = c_anna.post(f"/board/{swap_offer_id}/take",
+                        data={"give_assignment_id": str(anna_swap_assign)}, follow_redirects=False)
+        check("Anna performs 1:1 swap", r.status_code == 303 and "/me?taken=1" in r.headers.get("location", ""))
+        with eng.connect() as conn:
+            ben_fr_owner = conn.execute(sa_text("SELECT helper_id FROM shift_assignments WHERE id=:i"), {"i": ben_swap_assign}).scalar()
+            anna_so_owner = conn.execute(sa_text("SELECT helper_id FROM shift_assignments WHERE id=:i"), {"i": anna_swap_assign}).scalar()
+            taken_with = conn.execute(sa_text("SELECT taken_with_assignment_id FROM shift_swap_offers WHERE id=:i"), {"i": swap_offer_id}).scalar()
+        check("  Ben's shift now Anna's", ben_fr_owner == anna_id, f"got {ben_fr_owner}")
+        check("  Anna's shift now Ben's", anna_so_owner == ben_id, f"got {anna_so_owner}")
+        check("  swap recorded taken_with", taken_with == anna_swap_assign)
+
+        # Aufräumen: die 1:1-Test-Schichten wieder löschen, damit die dadurch
+        # entstandenen Zuweisungen (Ben hat jetzt eine So-Schicht) spätere
+        # Self-Signup-Tests nicht mit Zeitkonflikten stören.
+        c_admin.post(f"/admin/shifts/{sb}/delete", follow_redirects=False)
+        c_admin.post(f"/admin/shifts/{sa_}/delete", follow_redirects=False)
+
+        # === Bar ist vom Tausch ausgeschlossen ===
+        print("\n=== Bar-Ausschluss ===")
+        c_admin.post("/admin/shifts/new", data={
+            "area_id": str(bar_area_id), "day_id": str(day_ids[1]),
+            "label": "Bar-NoSwap", "start_time": "18:00", "end_time": "22:00", "capacity": "1",
+        }, follow_redirects=False)
+        with eng.connect() as conn:
+            bar_shift = conn.execute(sa_text("SELECT id FROM shifts WHERE label='Bar-NoSwap'")).scalar()
+        # Zuweisung direkt in der DB (robuster als über Admin-UI, unabhängig
+        # von Bens Verfügbarkeit/Kapazität).
+        with eng.begin() as conn:
+            conn.execute(sa_text(
+                "INSERT INTO shift_assignments (shift_id, helper_id) VALUES (:s, :h)"
+            ), {"s": bar_shift, "h": ben_id})
+            bar_assign = conn.execute(sa_text(
+                "SELECT id FROM shift_assignments WHERE helper_id=:h AND shift_id=:s"), {"h": ben_id, "s": bar_shift}).scalar()
+        r = c_ben2.get(f"/me/assignments/{bar_assign}/offer", follow_redirects=False)
+        check("Bar shift can't be offered (form redirects)",
+              r.status_code == 303 and "area_excluded" in r.headers.get("location", ""))
+        r = c_ben2.post(f"/me/assignments/{bar_assign}/offer",
+                        data={"want_type": "day", "wanted_day_id": str(day_ids[1]), "allow_giveaway": "on"},
+                        follow_redirects=False)
+        # Kein OFFENES Offer darf für die Bar-Zuweisung entstehen. (Wir filtern
+        # auf status='open', weil SQLite freigegebene Assignment-IDs recyceln
+        # kann und alte, bereits abgeschlossene Offers dieselbe ID referenzieren.)
+        with eng.connect() as conn:
+            bar_offer = conn.execute(sa_text(
+                "SELECT id FROM shift_swap_offers WHERE assignment_id=:a AND status='open'"),
+                {"a": bar_assign}).scalar()
+        check("Bar shift POST offer blocked (no offer created)", bar_offer is None)
+
+        # Bar-Test-Schicht wieder löschen
+        c_admin.post(f"/admin/shifts/{bar_shift}/delete", follow_redirects=False)
+
         print("\n=== Neue Features ===")
 
-        # --- 1. "Nur eine Schicht"-Toggle ---
+        # --- 0. Admin-Schichttausch (v.a. für Bar) ---
+        # Zwei frische Bar-Schichten, je einem Helfer zugewiesen, dann tauschen.
+        c_admin.post("/admin/shifts/new", data={
+            "area_id": str(bar_area_id), "day_id": str(day_ids[1]),
+            "label": "AdmSwap-A", "start_time": "08:00", "end_time": "10:00", "capacity": "1",
+        }, follow_redirects=False)
+        c_admin.post("/admin/shifts/new", data={
+            "area_id": str(bar_area_id), "day_id": str(day_ids[2]),
+            "label": "AdmSwap-B", "start_time": "08:00", "end_time": "10:00", "capacity": "1",
+        }, follow_redirects=False)
+        with eng.connect() as conn:
+            adm_a = conn.execute(sa_text("SELECT id FROM shifts WHERE label='AdmSwap-A'")).scalar()
+            adm_b = conn.execute(sa_text("SELECT id FROM shifts WHERE label='AdmSwap-B'")).scalar()
+        with eng.begin() as conn:
+            conn.execute(sa_text("INSERT INTO shift_assignments (shift_id, helper_id) VALUES (:s,:h)"), {"s": adm_a, "h": ben_id})
+            conn.execute(sa_text("INSERT INTO shift_assignments (shift_id, helper_id) VALUES (:s,:h)"), {"s": adm_b, "h": anna_id})
+            adm_assign_a = conn.execute(sa_text("SELECT id FROM shift_assignments WHERE shift_id=:s AND helper_id=:h"), {"s": adm_a, "h": ben_id}).scalar()
+            adm_assign_b = conn.execute(sa_text("SELECT id FROM shift_assignments WHERE shift_id=:s AND helper_id=:h"), {"s": adm_b, "h": anna_id}).scalar()
+
+        # Swap-Seite lädt
+        r = c_admin.get("/admin/swap")
+        check("admin swap page loads", r.status_code == 200 and "Schichten tauschen" in r.text)
+
+        # Tausch durchführen
+        r = c_admin.post("/admin/swap", data={
+            "assignment_a": str(adm_assign_a), "assignment_b": str(adm_assign_b),
+        }, follow_redirects=False)
+        check("admin swap performed", r.status_code == 303 and "flash=swapped" in r.headers.get("location", ""))
+        with eng.connect() as conn:
+            # Ben's Assignment zeigt jetzt auf B's Schicht (Schichten wechseln
+            # via helper_id-Tausch: adm_assign_a gehört jetzt Anna)
+            owner_a = conn.execute(sa_text("SELECT helper_id FROM shift_assignments WHERE id=:i"), {"i": adm_assign_a}).scalar()
+            owner_b = conn.execute(sa_text("SELECT helper_id FROM shift_assignments WHERE id=:i"), {"i": adm_assign_b}).scalar()
+        check("  helpers swapped", owner_a == anna_id and owner_b == ben_id,
+              f"a_owner={owner_a}, b_owner={owner_b}")
+
+        # Tausch mit derselben Person auf beiden Seiten wird abgelehnt
+        r = c_admin.post("/admin/swap", data={
+            "assignment_a": str(adm_assign_a), "assignment_b": str(adm_assign_a),
+        }, follow_redirects=False)
+        check("admin swap rejects identical assignment", "flash=missing" in r.headers.get("location", ""))
+
+        # Aufräumen
+        c_admin.post(f"/admin/shifts/{adm_a}/delete", follow_redirects=False)
+        c_admin.post(f"/admin/shifts/{adm_b}/delete", follow_redirects=False)
+
+
         r = post_form(c_ben2, "/me/shift-preference", [("wants_only_one_shift", "on")],
                       follow_redirects=False)
         check("Ben toggles wants_only_one_shift on", r.status_code == 303)

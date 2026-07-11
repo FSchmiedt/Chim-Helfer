@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     # Beispiel: "test@example.org, orga@example.org"
     SHIFT_SIGNUP_PREVIEW_EMAILS: str = ""
 
+    # Bereiche, die vom Tausch-Board ausgeschlossen sind (Komma-getrennt).
+    # Diese Schichten kann man nicht aufs Board stellen; Tausch macht der Admin
+    # manuell. Default: Bar.
+    SWAP_EXCLUDED_AREAS: str = "Bar"
+
     # Anforderungen (nur Anzeige)
     MIN_SHIFTS: int = 2
     MIN_DAYS: int = 2
@@ -102,6 +107,12 @@ class Settings(BaseSettings):
         """Set der Preview-Email-Adressen (lowercase, getrimmt)."""
         raw = self.SHIFT_SIGNUP_PREVIEW_EMAILS or ""
         return {e.strip().lower() for e in raw.split(",") if e.strip()}
+
+    @property
+    def swap_excluded_areas(self) -> set[str]:
+        """Set der Bereichsnamen (lowercase), die nicht getauscht werden dürfen."""
+        raw = self.SWAP_EXCLUDED_AREAS or ""
+        return {a.strip().lower() for a in raw.split(",") if a.strip()}
 
 
 settings = Settings()

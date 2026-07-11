@@ -49,6 +49,12 @@ NEW_COLUMNS_BY_TABLE = {
         ("pfand_returned_at", "TIMESTAMP"),
         ("wants_only_one_shift", "BOOLEAN"),
     ],
+    "shift_swap_offers": [
+        ("want_type", "VARCHAR(10)"),
+        ("wanted_day_id", "INTEGER"),
+        ("allow_giveaway", "BOOLEAN"),
+        ("taken_with_assignment_id", "INTEGER"),
+    ],
 }
 
 # Zusätzliche Backfills nach ADD COLUMN (für NOT NULL-artige Defaults).
@@ -56,6 +62,8 @@ BACKFILLS = [
     ("helpers", "UPDATE helpers SET pfand_paid = 0 WHERE pfand_paid IS NULL"),
     ("helpers", "UPDATE helpers SET pfand_returned = 0 WHERE pfand_returned IS NULL"),
     ("helpers", "UPDATE helpers SET wants_only_one_shift = 0 WHERE wants_only_one_shift IS NULL"),
+    ("shift_swap_offers", "UPDATE shift_swap_offers SET want_type = 'day' WHERE want_type IS NULL"),
+    ("shift_swap_offers", "UPDATE shift_swap_offers SET allow_giveaway = 0 WHERE allow_giveaway IS NULL"),
 ]
 
 

@@ -64,6 +64,12 @@
 {% if p.get('error') == 'origin_changed' %}
   <div class="mb-4 p-3 rounded bg-amber-50 border border-amber-200 text-amber-800 text-sm">Die Schicht wurde inzwischen anders vergeben – die Anfrage ist damit hinfällig.</div>
 {% endif %}
+{% if p.get('withdrawn') %}
+  <div class="mb-4 p-3 rounded bg-slate-50 border border-slate-200 text-slate-700 text-sm">Du hast dich aus der Schicht ausgetragen. Sie ist jetzt wieder frei für andere.</div>
+{% endif %}
+{% if p.get('error') == 'withdraw_excluded' %}
+  <div class="mb-4 p-3 rounded bg-amber-50 border border-amber-200 text-amber-800 text-sm">Bar-Schichten kannst du nicht selbst austragen – die tauscht das Orga-Team. Nutze „Zum Tausch anbieten" oder melde dich beim Helfer-Team.</div>
+{% endif %}
 
 <!-- Eingehende Tausch-Anfragen (priorisiert anzeigen) -->
 {% if incoming_requests %}
@@ -157,30 +163,33 @@
 
       <div class="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-2">
         {% if my_offer %}
+          <span class="inline-flex items-center px-3 py-1.5 text-xs rounded bg-amber-50 border border-amber-200 text-amber-800">
+            auf dem Tausch-Board
+          </span>
           <form method="post" action="/me/offers/{{ my_offer.id }}/cancel">
             <button class="px-3 py-1.5 text-xs rounded bg-white border border-slate-300 hover:bg-slate-50 text-slate-700">
               Vom Board nehmen
             </button>
           </form>
+        {% elif a.shift.area.name|lower in swap_excluded_areas %}
+          <span class="text-xs text-slate-400">
+            {{ a.shift.area.name }}-Schichten werden vom Orga-Team getauscht — melde dich beim Helfer-Team.
+          </span>
         {% else %}
-          <details class="relative">
-            <summary class="cursor-pointer px-3 py-1.5 text-xs rounded bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 list-none">
-              Aufs Board stellen
-            </summary>
-            <form method="post" action="/me/assignments/{{ a.id }}/offer"
-                  class="mt-2 p-3 bg-slate-50 border border-slate-200 rounded space-y-2">
-              <label class="block text-xs text-slate-600">Nachricht (optional, z.B. „kurzfristig krank, wer übernimmt?"):</label>
-              <textarea name="message" rows="2"
-                        class="w-full px-2 py-1 border border-slate-300 rounded text-xs"></textarea>
-              <button class="px-3 py-1.5 text-xs rounded bg-primary-600 hover:bg-primary-700 text-white">
-                Auf Board stellen
-              </button>
-            </form>
-          </details>
+          <a href="/me/assignments/{{ a.id }}/offer"
+             class="px-3 py-1.5 text-xs rounded bg-primary-600 hover:bg-primary-700 text-white">
+            Zum Tausch anbieten
+          </a>
           <a href="/me/assignments/{{ a.id }}/swap"
              class="px-3 py-1.5 text-xs rounded bg-white border border-slate-300 hover:bg-slate-50 text-slate-700">
             Direkt mit Freund:in tauschen
           </a>
+          <form method="post" action="/me/assignments/{{ a.id }}/withdraw"
+                onsubmit="return confirm('Wirklich aus dieser Schicht austragen? Sie wird dann wieder für andere frei — ein erneutes Eintragen ist nicht garantiert.');">
+            <button class="px-3 py-1.5 text-xs rounded bg-white border border-red-300 hover:bg-red-50 text-red-700">
+              Austragen
+            </button>
+          </form>
         {% endif %}
       </div>
     </li>

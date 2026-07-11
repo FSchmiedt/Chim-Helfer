@@ -6,28 +6,26 @@
   <div>
     <h2 class="text-2xl font-semibold">Tausch-Board</h2>
     <p class="text-sm text-slate-500 mt-1">
-      Andere Helfer:innen bieten hier ihre Schichten an. Wer übernehmen möchte, klickt einfach auf „Übernehmen" — beide Seiten sind damit einverstanden.
+      Hier bieten Helfer:innen ihre Schichten zum Tausch an. Ein Tausch ist 1:1 –
+      du gibst eine deiner passenden Schichten ab und bekommst dafür die angebotene.
     </p>
   </div>
   <a href="/me" class="text-sm text-slate-500 hover:text-slate-800">← Mein Bereich</a>
 </div>
 
 {% set p = request.query_params %}
-{% if p.get('error') == 'time_conflict' %}
-  <div class="mb-4 p-3 rounded bg-red-50 border border-red-200 text-red-800 text-sm">
-    Diese Schicht überschneidet sich zeitlich mit einer deiner anderen Schichten.
-  </div>
-{% elif p.get('error') == 'already_assigned' %}
-  <div class="mb-4 p-3 rounded bg-red-50 border border-red-200 text-red-800 text-sm">
-    Diese Schicht hast du bereits.
-  </div>
-{% elif p.get('error') == 'not_available' %}
+{% set errmap = {
+  'conflict': 'Diese Schicht überschneidet sich zeitlich mit einer deiner anderen Schichten.',
+  'not_available': 'Das Angebot ist nicht mehr offen — vielleicht war jemand schneller.',
+  'own_offer': 'Das ist dein eigenes Angebot.',
+  'no_match': 'Die gewählte Schicht passt nicht zum Tauschwunsch.',
+  'need_match': 'Du hast keine passende Gegenschicht für diesen Tausch.',
+  'choose_shift': 'Bitte wähle aus, welche Schicht du im Gegenzug abgibst.',
+  'bad_choice': 'Ungültige Auswahl.',
+} %}
+{% if p.get('error') and errmap.get(p.get('error')) %}
   <div class="mb-4 p-3 rounded bg-amber-50 border border-amber-200 text-amber-800 text-sm">
-    Das Angebot ist nicht mehr offen — vielleicht war jemand:d schneller.
-  </div>
-{% elif p.get('error') == 'own_offer' %}
-  <div class="mb-4 p-3 rounded bg-amber-50 border border-amber-200 text-amber-800 text-sm">
-    Das ist dein eigenes Angebot.
+    {{ errmap.get(p.get('error')) }}
   </div>
 {% endif %}
 
@@ -38,42 +36,69 @@
   <ul class="space-y-3">
     {% for o in foreign_offers %}
     {% set s = o.assignment.shift %}
-    {% set takeable = takeable_flags.get(o.id) %}
-    {% set can_take = takeable and takeable[0] %}
-    {% set reason = takeable[1] if takeable else 'unknown' %}
+    {% set opt = offer_options.get(o.id) %}
+    {% set matching = opt.matching if opt else [] %}
     <li class="bg-white border border-slate-200 rounded-lg p-4">
-      <div class="flex items-start justify-between gap-3">
-        <div class="flex-1">
+      <div class="flex items-start justify-between gap-3 flex-wrap">
+        <div class="flex-1 min-w-[200px]">
           <div class="text-xs uppercase tracking-wide text-slate-500">
             {{ s.day.label }} · {{ s.day.date.strftime('%d.%m.') }}
           </div>
-          <div class="font-semibold mt-0.5">
-            {{ s.area.name }}{% if o.assignment.role %} – {{ o.assignment.role.name }}{% endif %}
-          </div>
+          <div class="font-semibold mt-0.5">{{ s.area.name }}</div>
           <div class="text-sm text-slate-600 mt-0.5">{{ s.time_range }}{% if s.label %} · {{ s.label }}{% endif %}</div>
           <div class="text-xs text-slate-500 mt-2">
-            angeboten von <strong>{{ o.offered_by.first_name }} {{ o.offered_by.last_name }}</strong>
+            von <strong>{{ o.offered_by.first_name }} {{ o.offered_by.last_name }}</strong>
             · {{ o.created_at.strftime('%d.%m. %H:%M') }}
           </div>
+
+          <!-- Was will A im Gegenzug? -->
+          <div class="mt-2 text-xs text-slate-600">
+            <span class="text-slate-400">Sucht im Tausch:</span>
+            {% if o.want_type == 'day' %}
+              jede Schicht am <strong>{{ o.wanted_day.label if o.wanted_day else '?' }}</strong>
+            {% else %}
+              bestimmte Schichten
+              ({{ o.wanted_shifts | map(attribute='shift') | map(attribute='area') | map(attribute='name') | unique | join(', ') }})
+            {% endif %}
+            {% if o.allow_giveaway %}<span class="text-slate-400"> · Übernahme ohne Gegenschicht möglich</span>{% endif %}
+          </div>
+
           {% if o.message %}
           <div class="mt-2 p-2 bg-slate-50 border border-slate-200 rounded text-xs italic text-slate-700">
             „{{ o.message }}"
           </div>
           {% endif %}
         </div>
-        <div class="flex-shrink-0">
-          {% if can_take %}
+
+        <!-- Übernehmen / Tauschen -->
+        <div class="flex-shrink-0 w-full sm:w-auto">
+          {% if matching or o.allow_giveaway %}
             <form method="post" action="/board/{{ o.id }}/take"
-                  onsubmit="return confirm('Diese Schicht übernehmen? Damit gehört sie dann dir.');">
-              <button class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded">
-                Übernehmen
+                  onsubmit="return confirm('Tausch durchführen?');"
+                  class="space-y-2">
+              {% if matching %}
+                <label class="block text-xs text-slate-500">Deine Gegenschicht:</label>
+                <select name="give_assignment_id" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+                  {% for a in matching %}
+                    <option value="{{ a.id }}">
+                      {{ a.shift.area.name }} · {{ a.shift.day.label }} · {{ a.shift.time_range }}
+                    </option>
+                  {% endfor %}
+                  {% if o.allow_giveaway %}
+                    <option value="giveaway">— nur übernehmen (nichts abgeben) —</option>
+                  {% endif %}
+                </select>
+              {% else %}
+                <input type="hidden" name="give_assignment_id" value="giveaway" />
+                <p class="text-xs text-slate-500">Du übernimmst diese Schicht (ohne Gegenschicht).</p>
+              {% endif %}
+              <button class="w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm rounded">
+                {% if matching %}Tauschen{% else %}Übernehmen{% endif %}
               </button>
             </form>
           {% else %}
             <span class="inline-block px-3 py-2 bg-slate-100 text-slate-500 text-xs rounded">
-              {% if reason == 'time_conflict' %}Zeitkonflikt
-              {% elif reason == 'already_assigned' %}schon deine
-              {% else %}nicht übernehmbar{% endif %}
+              keine passende Gegenschicht
             </span>
           {% endif %}
         </div>
@@ -98,6 +123,12 @@
     <li class="bg-slate-50 border border-slate-200 rounded-lg p-3 flex items-center justify-between gap-3 text-sm">
       <div>
         <div class="font-medium">{{ s.area.name }} · {{ s.day.label }} · {{ s.time_range }}</div>
+        <div class="text-xs text-slate-500 mt-0.5">
+          Sucht:
+          {% if o.want_type == 'day' %}jede Schicht am {{ o.wanted_day.label if o.wanted_day else '?' }}
+          {% else %}{{ o.wanted_shifts|length }} bestimmte Schicht(en){% endif %}
+          {% if o.allow_giveaway %} · Abgabe erlaubt{% endif %}
+        </div>
         {% if o.message %}<div class="text-xs text-slate-600 mt-0.5 italic">„{{ o.message }}"</div>{% endif %}
       </div>
       <form method="post" action="/me/offers/{{ o.id }}/cancel">

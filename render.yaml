@@ -31,6 +31,8 @@ services:
         sync: false  # optional: ISO-Zeitpunkt für automatische Freischaltung, z.B. 2026-07-10T14:00:00+02:00
       - key: SHIFT_SIGNUP_PREVIEW_EMAILS
         sync: false  # optional: Test-Nutzer (Komma-getrennt), sehen Schichten vor Freischaltung
+      - key: SWAP_EXCLUDED_AREAS
+        value: "Bar"  # Bereiche ohne Self-Service-Tausch (Komma-getrennt); Tausch läuft dort über Admin
       - key: MIN_SHIFTS
         value: "2"
       - key: MIN_DAYS
