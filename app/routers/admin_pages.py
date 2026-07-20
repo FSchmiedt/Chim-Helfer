@@ -1051,6 +1051,14 @@ def _shift_detail_ctx(request: Request, db: Session, shift, **extra) -> dict:
         for c in candidates
     }
 
+    defaults = dict(
+        warn_violations=None,
+        warn_helper=None,
+        warn_sentence=None,
+        warn_role_id=None,
+    )
+    defaults.update(extra)
+
     return _ctx(
         request,
         shift=shift,
@@ -1060,11 +1068,7 @@ def _shift_detail_ctx(request: Request, db: Session, shift, **extra) -> dict:
         role_info_by_helper=role_info_by_helper,
         prefs_rank_for_area=prefs_rank_for_area,
         stand_by_helper=stand_by_helper,
-        warn_violations=None,
-        warn_helper=None,
-        warn_sentence=None,
-        warn_role_id=None,
-        **extra,
+        **defaults,
     )
 
 
