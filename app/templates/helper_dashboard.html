@@ -67,9 +67,6 @@
 {% if p.get('withdrawn') %}
   <div class="mb-4 p-3 rounded bg-slate-50 border border-slate-200 text-slate-700 text-sm">Du hast dich aus der Schicht ausgetragen. Sie ist jetzt wieder frei für andere.</div>
 {% endif %}
-{% if p.get('error') == 'withdraw_excluded' %}
-  <div class="mb-4 p-3 rounded bg-amber-50 border border-amber-200 text-amber-800 text-sm">Bar-Schichten kannst du nicht selbst austragen – die tauscht das Orga-Team. Nutze „Zum Tausch anbieten" oder melde dich beim Helfer-Team.</div>
-{% endif %}
 
 <!-- Eingehende Tausch-Anfragen (priorisiert anzeigen) -->
 {% if incoming_requests %}

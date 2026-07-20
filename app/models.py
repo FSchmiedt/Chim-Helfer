@@ -117,6 +117,12 @@ class Helper(Base):
     # Bedeutung: zahlt 75€ für ein Ticket. Wird vom Helfer im /me Dashboard gesetzt.
     wants_only_one_shift: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Admin bietet (manuell, im Einzelfall) die 75€-Ein-Schicht-Regelung an,
+    # statt dass die Person selbst danach fragt. Ausloest beim Setzen eine
+    # Mail an die Person (Absender bar@/helfen@ je nach Bereich).
+    discount_offered: Mapped[bool] = mapped_column(Boolean, default=False)
+    discount_offered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

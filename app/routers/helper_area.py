@@ -468,13 +468,14 @@ def _can_helper_take_shift_for_signup(
 # Selbst aus einer Schicht austragen (ohne Tausch)
 # ---------------------------------------------------------------------------
 @router.post("/me/assignments/{assignment_id}/withdraw")
-def me_withdraw_assignment(assignment_id: int, request: Request, db: Session = Depends(get_db)):
+def me_withdraw_assignment(assignment_id: int, request: Request, background_tasks: BackgroundTasks,
+                            db: Session = Depends(get_db)):
     """Helfer:in trägt sich selbst aus einer Schicht aus – ohne Tausch.
 
-    Nicht erlaubt für ausgeschlossene Bereiche (Bar): diese Schichten werden
-    ausschließlich über den Tausch vom Orga-Team umverteilt, nicht einfach
-    freigegeben. Für alle anderen Bereiche wird die Zuweisung gelöscht und die
-    Schicht damit wieder frei für andere.
+    Funktioniert für alle Bereiche gleich, auch Bar: die Zuweisung wird
+    gelöscht, die Schicht ist damit sofort wieder frei. Danach geht eine
+    Info-Mail ans zuständige Org-Postfach raus (bar@ bei Bar, sonst helfen@),
+    damit das Team nicht jede Austragung einzeln im Tool nachschauen muss.
     """
     redir, helper = require_helper_redirect(request, db)
     if redir:
@@ -483,15 +484,12 @@ def me_withdraw_assignment(assignment_id: int, request: Request, db: Session = D
     assignment = (
         db.query(models.ShiftAssignment)
         .filter(models.ShiftAssignment.id == assignment_id)
-        .options(joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area))
+        .options(joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area),
+                 joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.day))
         .one_or_none()
     )
     if not assignment or assignment.helper_id != helper.id:
         return RedirectResponse("/me?error=not_your_assignment", status_code=303)
-
-    # Bar (bzw. andere ausgeschlossene Bereiche) darf man nicht selbst austragen.
-    if _area_is_swap_excluded(assignment.shift.area):
-        return RedirectResponse("/me?error=withdraw_excluded", status_code=303)
 
     # Offene Board-Angebote und ausgehende Tausch-Anfragen zu genau dieser
     # Schicht aufräumen, damit keine ins Leere zeigenden Einträge übrig bleiben.
@@ -507,8 +505,13 @@ def me_withdraw_assignment(assignment_id: int, request: Request, db: Session = D
         action="unassigned", source="self_withdraw", role=assignment.role,
     )
 
+    from ..email_sender import build_org_withdraw_notice, deliver, send_in_background
+    org_msg = build_org_withdraw_notice(helper, assignment.shift)
+
     db.delete(assignment)
     db.commit()
+
+    send_in_background(background_tasks, deliver, org_msg, label="withdraw_notice")
     return RedirectResponse("/me?withdrawn=1", status_code=303)
 
 

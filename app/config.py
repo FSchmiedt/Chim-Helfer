@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     SMTP_FROM_ADDRESS: str = "helfer@example.org"
     SMTP_FROM_NAME: str = "Chimaera Helfer-Team"
     SMTP_USE_TLS: bool = True
+    # Zusaetzliche Org-Postfaecher: bekommen Benachrichtigungen bei Schicht-
+    # Austragungen und sind (statt des generischen Helfer-Team-Absenders) der
+    # Absender bei bereichs-spezifischen Mails wie dem 75€-Angebot.
+    BAR_EMAIL: str = "bar@chimaera-festival.de"
+    BAR_NAME: str = "Chimaera Bar"
+    HELFEN_EMAIL: str = "helfen@chimaera-festival.de"
+    HELFEN_NAME: str = "Chimaera Helfer-Team"
     # Sekunden bis SMTP aufgibt. Der Versand laeuft im Hintergrund, blockiert
     # also keine Seite mehr - ein haengender Server soll den Worker trotzdem
     # nicht ewig belegen.

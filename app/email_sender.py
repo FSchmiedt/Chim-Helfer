@@ -187,15 +187,24 @@ def send_personalized(
 # Transaktionale Benachrichtigungen (Reset / Swap)
 # ---------------------------------------------------------------------------
 def _send_single(to_email: str, to_name: str, subject: str, body: str,
-                 cc: str | None = None) -> None:
+                 cc: str | None = None,
+                 from_email: str | None = None, from_name: str | None = None) -> None:
     """Interner Helfer: eine Mail senden. Wirft MailError bei Problemen.
 
     Wenn `cc` gesetzt ist, geht eine zusätzliche Kopie an diese Adresse
     (sichtbar im Cc-Header).
+
+    `from_email`/`from_name` überschreiben optional den Standard-Absender
+    (z.B. bar@/helfen@ statt des generischen Helfer-Team-Postfachs). Achtung:
+    ob das beim jeweiligen Mailprovider ohne SPF/DKIM-Warnung durchgeht, hängt
+    davon ab, ob der SMTP-Account eine "Senden als"-Berechtigung für diese
+    Adresse hat – ggf. beim Provider (z.B. Google Workspace) einrichten.
     """
     if not settings.smtp_enabled:
         raise MailError("SMTP nicht konfiguriert.")
-    sender = _safe_formataddr(settings.SMTP_FROM_NAME, settings.SMTP_FROM_ADDRESS)
+    sender = _safe_formataddr(from_name or settings.SMTP_FROM_NAME,
+                               from_email or settings.SMTP_FROM_ADDRESS)
+    envelope_from = from_email or settings.SMTP_FROM_ADDRESS
     msg = MIMEMultipart()
     msg["From"] = sender
     msg["To"] = _safe_formataddr(to_name, to_email)
@@ -215,7 +224,7 @@ def _send_single(to_email: str, to_name: str, subject: str, body: str,
         else:
             server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=settings.SMTP_TIMEOUT)
         server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-        server.sendmail(settings.SMTP_FROM_ADDRESS, recipients, msg.as_string())
+        server.sendmail(envelope_from, recipients, msg.as_string())
         server.quit()
     except Exception as exc:  # noqa: BLE001
         raise MailError(f"SMTP-Fehler: {exc}") from exc
@@ -230,7 +239,8 @@ def deliver(prepared: dict) -> None:
     den Hintergrund-Task.
     """
     _send_single(prepared["to_email"], prepared["to_name"], prepared["subject"],
-                 prepared["body"], cc=prepared.get("cc"))
+                 prepared["body"], cc=prepared.get("cc"),
+                 from_email=prepared.get("from_email"), from_name=prepared.get("from_name"))
 
 
 def build_password_reset_message(helper, reset_url: str) -> dict:
@@ -347,3 +357,121 @@ def build_swap_taken_message(from_helper, by_helper, assignment) -> dict:
 
 def send_swap_taken_email(from_helper, by_helper, assignment) -> None:
     deliver(build_swap_taken_message(from_helper, by_helper, assignment))
+
+
+# ---------------------------------------------------------------------------
+# Org-Benachrichtigung bei Schicht-Austragung (Bar -> bar@, sonst -> helfen@)
+# ---------------------------------------------------------------------------
+def _org_contact_for_area(area) -> tuple[str, str]:
+    """Gibt (email, name) des zustaendigen Org-Postfachs fuer einen Bereich zurueck."""
+    is_bar = area.name.strip().lower() in settings.swap_excluded_areas
+    if is_bar:
+        return settings.BAR_EMAIL, settings.BAR_NAME
+    return settings.HELFEN_EMAIL, settings.HELFEN_NAME
+
+
+def build_org_withdraw_notice(helper, shift) -> dict:
+    """An bar@/helfen@, wenn sich jemand selbst aus einer Schicht austraegt.
+
+    Gilt fuer alle Bereiche gleich, auch Bar: die Schicht ist im Tool schon
+    wieder frei, das hier ist reine Info fuer die Orga, damit niemand jede
+    Austragung einzeln im Tool nachschauen muss.
+    """
+    org_email, org_name = _org_contact_for_area(shift.area)
+    who = f"{helper.first_name} {helper.last_name} ({helper.email})"
+    where = (
+        f"  Bereich:  {shift.area.name}\n"
+        f"  Tag:      {shift.day.label}\n"
+        f"  Zeit:     {shift.time_range}\n"
+    )
+    subject = f"Schicht-Austragung – {helper.first_name} {helper.last_name}"
+    body = (
+        f"Hallo,\n\n"
+        f"{who} hat sich selbst aus folgender Schicht ausgetragen:\n\n"
+        f"{where}\n"
+        f"Die Schicht ist im Tool automatisch wieder frei - reine Info, kein "
+        f"Handlungsbedarf.\n\n"
+        f"Liebe Grüße\nDas Helfer-Tool"
+    )
+    return {
+        "to_email": org_email,
+        "to_name": org_name,
+        "subject": subject,
+        "body": body,
+    }
+
+
+def send_org_withdraw_notice(helper, shift) -> None:
+    deliver(build_org_withdraw_notice(helper, shift))
+
+
+# ---------------------------------------------------------------------------
+# Benachrichtigung an Helfer:in, wenn Admin sie/ihn ein-/austraegt
+# ---------------------------------------------------------------------------
+def build_shift_change_notice_for_helper(helper, shift, action: str, role=None) -> dict:
+    """action: 'assigned' oder 'unassigned'. Geht an die/den betroffene:n Helfer:in."""
+    verb = "eingetragen" if action == "assigned" else "ausgetragen"
+    subject = f"Du wurdest {verb} – {settings.FESTIVAL_NAME}"
+    role_line = f"  Rolle:    {role.name}\n" if role else ""
+    body = (
+        f"Hallo {helper.first_name},\n\n"
+        f"das Orga-Team hat dich gerade {verb}:\n\n"
+        f"  Bereich:  {shift.area.name}\n"
+        f"  Tag:      {shift.day.label}\n"
+        f"  Zeit:     {shift.time_range}\n"
+        f"{role_line}\n"
+        f"Schau bei Fragen gern unter 'Mein Bereich' im Helfer-Tool vorbei.\n\n"
+        f"Liebe Grüße\nDas Helfer-Team"
+    )
+    return {
+        "to_email": helper.email,
+        "to_name": helper.first_name,
+        "subject": subject,
+        "body": body,
+    }
+
+
+def send_shift_change_notice_to_helper(helper, shift, action: str, role=None) -> None:
+    deliver(build_shift_change_notice_for_helper(helper, shift, action, role))
+
+
+# ---------------------------------------------------------------------------
+# 75€-Ein-Schicht-Angebot (manuell vom Admin ausgeloest)
+# ---------------------------------------------------------------------------
+def build_discount_offer_message(helper) -> dict:
+    """Angebot an eine:n Helfer:in, statt der vollen Schichten nur eine
+
+    einzelne Schicht fuer 75€ (statt 160€) zu machen. Absender ist bewusst
+    bar@/helfen@ (nicht das generische Helfer-Team-Postfach), damit Antworten
+    direkt bei der richtigen Stelle landen. Bereich wird ueber die aktuellen
+    Zuweisungen der Person bestimmt (erste gefundene Bar-Zuweisung zaehlt);
+    ohne Zuweisung geht's an helfen@.
+    """
+    is_bar = any(
+        a.shift.area.name.strip().lower() in settings.swap_excluded_areas
+        for a in helper.shift_assignments
+    )
+    org_email = settings.BAR_EMAIL if is_bar else settings.HELFEN_EMAIL
+    org_name = settings.BAR_NAME if is_bar else settings.HELFEN_NAME
+
+    subject = f"Angebot: nur eine Schicht für 75€ – {settings.FESTIVAL_NAME}"
+    body = (
+        f"Hallo {helper.first_name},\n\n"
+        f"wir koennten dir anbieten, statt der vollen Schichten nur eine "
+        f"einzelne Schicht zu uebernehmen - dafuer 75€ Pfand statt 160€.\n\n"
+        f"Wenn du damit einverstanden bist, schreib uns einfach kurz eine "
+        f"Mail an {org_email}, dann klaeren wir das Weitere.\n\n"
+        f"Liebe Grüße\n{org_name}"
+    )
+    return {
+        "to_email": helper.email,
+        "to_name": helper.first_name,
+        "from_email": org_email,
+        "from_name": org_name,
+        "subject": subject,
+        "body": body,
+    }
+
+
+def send_discount_offer_email(helper) -> None:
+    deliver(build_discount_offer_message(helper))

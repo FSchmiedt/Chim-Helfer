@@ -6,7 +6,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Form, Query, Request, UploadFile, File, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Query, Request, UploadFile, File, status
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, case, or_, select
@@ -282,7 +282,7 @@ def helper_new_form(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/helpers/new", response_class=HTMLResponse)
-async def helper_new_submit(request: Request, db: Session = Depends(get_db)):
+async def helper_new_submit(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Pragmatischer Pflicht-Datensatz: Vorname, Nachname, Email.
     Optional: Telefon, Geburtsdatum, Tage, Wunschbereiche, Admin-Notiz."""
     from datetime import date as ddate, datetime as ddatetime
@@ -409,11 +409,9 @@ async def helper_new_submit(request: Request, db: Session = Depends(get_db)):
         verify_url = f"{base}/verify/{helper.email_verification_token}"
         cc_address = settings.SMTP_FROM_ADDRESS or None
         if settings.smtp_enabled:
-            try:
-                from ..email_sender import send_verification_email
-                send_verification_email(helper, verify_url, cc=cc_address)
-            except Exception as exc:  # noqa: BLE001
-                print(f"[admin helper_new] SMTP-Fehler beim Verify-Versand: {exc}")
+            from ..email_sender import send_verification_email, send_in_background
+            send_in_background(background_tasks, send_verification_email, helper, verify_url,
+                                cc=cc_address, label="helper_new_verify")
         else:
             print(f"[admin helper_new] SMTP nicht konfiguriert. "
                   f"Verifikations-Link für {helper.email}: {verify_url}")
@@ -646,7 +644,8 @@ def helper_detail(helper_id: int, request: Request, db: Session = Depends(get_db
     )
 
 
-async def _handle_helper_update(helper_id: int, request: Request, db: Session):
+async def _handle_helper_update(helper_id: int, request: Request, db: Session,
+                                 background_tasks: BackgroundTasks | None = None):
     """Ein Endpoint für alle Admin-Edits an einer Helfer:in.
 
     Welche Felder in einem bestimmten Submit geändert werden, steuert das
@@ -664,7 +663,7 @@ async def _handle_helper_update(helper_id: int, request: Request, db: Session):
 
     # Default: wenn kein section-Hint kommt (z.B. alter Client), alles speichern
     if not sections:
-        sections = {"admin", "contact", "prefs", "pfand"}
+        sections = {"admin", "contact", "prefs", "pfand", "discount"}
 
     # --- Admin-Meta (Status, interne Notizen, Rollen-Zutrauen) ---
     if "admin" in sections:
@@ -761,7 +760,22 @@ async def _handle_helper_update(helper_id: int, request: Request, db: Session):
             helper.pfand_returned_at = None
         helper.pfand_returned = new_returned
 
+    # --- 75€-Ein-Schicht-Angebot (Admin bietet es manuell an) ---
+    discount_msg = None
+    if "discount" in sections:
+        new_discount = form.get("discount_offered") == "on"
+        if new_discount and not helper.discount_offered:
+            helper.discount_offered_at = ddatetime.utcnow()
+            from ..email_sender import build_discount_offer_message
+            discount_msg = build_discount_offer_message(helper)
+        if not new_discount:
+            helper.discount_offered_at = None
+        helper.discount_offered = new_discount
+
     db.commit()
+    if discount_msg is not None:
+        from ..email_sender import deliver, send_in_background
+        send_in_background(background_tasks, deliver, discount_msg, label="discount_offer")
     return RedirectResponse(f"/admin/helpers/{helper.id}", status_code=303)
 
 
@@ -809,7 +823,8 @@ def helper_reset_link(helper_id: int, request: Request, db: Session = Depends(ge
 
 
 @router.post("/helpers/{helper_id}/resend-verify", response_class=HTMLResponse)
-def helper_resend_verify(helper_id: int, request: Request, db: Session = Depends(get_db)):
+def helper_resend_verify(helper_id: int, request: Request, background_tasks: BackgroundTasks,
+                          db: Session = Depends(get_db)):
     """Admin schickt die Email-Verifikations-Mail erneut. Eine Kopie geht an die
     konfigurierte Absender-Adresse (helfen@...), damit das Helfer-Team mitliest."""
     from datetime import datetime
@@ -840,15 +855,11 @@ def helper_resend_verify(helper_id: int, request: Request, db: Session = Depends
 
     flash: str
     if settings.smtp_enabled:
-        try:
-            from ..email_sender import send_verification_email
-            send_verification_email(helper, verify_url, cc=cc_address)
-            cc_note = f" (Kopie an {cc_address})" if cc_address else ""
-            flash = f"success: Verifikations-Mail an {helper.email} verschickt{cc_note}."
-        except Exception as exc:  # noqa: BLE001
-            print(f"[admin resend_verify] SMTP-Fehler: {exc}")
-            flash = (f"error: SMTP-Fehler beim Versand: {exc}. "
-                     f"Du kannst den Link manuell weitergeben: {verify_url}")
+        from ..email_sender import send_verification_email, send_in_background
+        send_in_background(background_tasks, send_verification_email, helper, verify_url,
+                            cc=cc_address, label="resend_verify")
+        cc_note = f" (Kopie an {cc_address})" if cc_address else ""
+        flash = f"success: Verifikations-Mail an {helper.email} wird verschickt{cc_note}."
     else:
         # Ohne SMTP geben wir den Link direkt zurück, dann kann Admin ihn
         # über einen anderen Kanal verschicken.
@@ -1075,15 +1086,19 @@ def _shift_detail_ctx(request: Request, db: Session, shift, **extra) -> dict:
 
 
 @router.post("/shifts/{shift_id}/delete")
-def shift_delete(shift_id: int, request: Request, db: Session = Depends(get_db)):
+def shift_delete(shift_id: int, request: Request, background_tasks: BackgroundTasks,
+                  db: Session = Depends(get_db)):
     if (r := require_admin_redirect(request)):
         return r
     shift = db.get(models.Shift, shift_id)
     if shift:
+        from ..email_sender import build_shift_change_notice_for_helper, deliver, send_in_background
         # Die Zuweisungen verschwinden per Cascade – vorher für alle
-        # betroffenen Helfer:innen eine Austragung protokollieren.
+        # betroffenen Helfer:innen eine Austragung protokollieren + benachrichtigen.
         for a in list(shift.assignments):
             log_assignment(db, a, action="unassigned", source="shift_deleted")
+            msg = build_shift_change_notice_for_helper(a.helper, shift, "unassigned", role=a.role)
+            send_in_background(background_tasks, deliver, msg, label="shift_deleted_notice")
         db.flush()
         db.delete(shift)
         db.commit()
@@ -1091,9 +1106,12 @@ def shift_delete(shift_id: int, request: Request, db: Session = Depends(get_db))
 
 
 @router.post("/shifts/{shift_id}/assign")
-async def shift_assign(shift_id: int, request: Request, db: Session = Depends(get_db)):
+async def shift_assign(shift_id: int, request: Request, background_tasks: BackgroundTasks,
+                        db: Session = Depends(get_db)):
     if (r := require_admin_redirect(request)):
         return r
+    from ..email_sender import build_shift_change_notice_for_helper, deliver, send_in_background
+
     form = await request.form()
     helper_id = int(form.get("helper_id"))
     role_id_str = form.get("role_id")
@@ -1102,7 +1120,8 @@ async def shift_assign(shift_id: int, request: Request, db: Session = Depends(ge
 
     existing = db.query(models.ShiftAssignment).filter_by(shift_id=shift_id, helper_id=helper_id).one_or_none()
     if existing:
-        # Reine Rollenänderung an einer bestehenden Zuweisung – nichts zu prüfen.
+        # Reine Rollenänderung an einer bestehenden Zuweisung – nichts zu prüfen,
+        # keine neue Zuweisungs-Mail (die Person ist ja schon eingetragen).
         old_role_name = existing.role.name if existing.role else None
         existing.role_id = role_id
         db.flush()
@@ -1136,30 +1155,47 @@ async def shift_assign(shift_id: int, request: Request, db: Session = Depends(ge
                 ),
             )
 
+    shift = db.get(models.Shift, shift_id)
+    helper = db.get(models.Helper, helper_id)
+    role = db.get(models.Role, role_id) if role_id else None
+
     db.add(models.ShiftAssignment(shift_id=shift_id, helper_id=helper_id, role_id=role_id))
     log_shift_change(
-        db, helper_id=helper_id, shift=db.get(models.Shift, shift_id),
-        action="assigned", source="admin",
-        role=db.get(models.Role, role_id) if role_id else None,
+        db, helper_id=helper_id, shift=shift,
+        action="assigned", source="admin", role=role,
     )
+    msg = build_shift_change_notice_for_helper(helper, shift, "assigned", role=role)
     db.commit()
+    send_in_background(background_tasks, deliver, msg, label="shift_assigned_notice")
     return RedirectResponse(f"/admin/shifts/{shift_id}", status_code=303)
 
 
 @router.post("/shifts/{shift_id}/unassign/{helper_id}")
-def shift_unassign(shift_id: int, helper_id: int, request: Request, db: Session = Depends(get_db)):
+def shift_unassign(shift_id: int, helper_id: int, request: Request, background_tasks: BackgroundTasks,
+                    db: Session = Depends(get_db)):
     if (r := require_admin_redirect(request)):
         return r
     assignment = (
         db.query(models.ShiftAssignment)
         .filter_by(shift_id=shift_id, helper_id=helper_id)
+        .options(joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area),
+                 joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.day),
+                 joinedload(models.ShiftAssignment.helper),
+                 joinedload(models.ShiftAssignment.role))
         .one_or_none()
     )
     if assignment:
+        from ..email_sender import build_shift_change_notice_for_helper, deliver, send_in_background
         # Erst protokollieren (der Snapshot braucht die Zuweisung), dann löschen.
         log_assignment(db, assignment, action="unassigned", source="admin")
+        msg = build_shift_change_notice_for_helper(
+            assignment.helper, assignment.shift, "unassigned", role=assignment.role,
+        )
         db.delete(assignment)
-    db.commit()
+        db.commit()
+        send_in_background(background_tasks, deliver, msg, label="shift_unassigned_notice")
+    else:
+        db.commit()
     return RedirectResponse(f"/admin/shifts/{shift_id}", status_code=303)
 
 
@@ -1234,7 +1270,8 @@ def admin_swap_page(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/swap")
-async def admin_swap_do(request: Request, db: Session = Depends(get_db)):
+async def admin_swap_do(request: Request, background_tasks: BackgroundTasks,
+                         db: Session = Depends(get_db)):
     if (r := require_admin_redirect(request)):
         return r
     form = await request.form()
@@ -1256,13 +1293,15 @@ async def admin_swap_do(request: Request, db: Session = Depends(get_db)):
     a = (
         db.query(models.ShiftAssignment)
         .filter(models.ShiftAssignment.id == assign_a_id)
-        .options(joinedload(models.ShiftAssignment.shift))
+        .options(joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area),
+                 joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.day))
         .one_or_none()
     )
     b = (
         db.query(models.ShiftAssignment)
         .filter(models.ShiftAssignment.id == assign_b_id)
-        .options(joinedload(models.ShiftAssignment.shift))
+        .options(joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.area),
+                 joinedload(models.ShiftAssignment.shift).joinedload(models.Shift.day))
         .one_or_none()
     )
     if not a or not b:
@@ -1321,6 +1360,16 @@ async def admin_swap_do(request: Request, db: Session = Depends(get_db)):
     log_transfer(db, shift=b.shift, from_helper_id=helper_b_id,
                  to_helper_id=helper_a_id, source="admin_swap", role=b.role)
 
+    from ..email_sender import build_shift_change_notice_for_helper, deliver, send_in_background
+    helper_a_obj = db.get(models.Helper, helper_a_id)
+    helper_b_obj = db.get(models.Helper, helper_b_id)
+    swap_msgs = [
+        build_shift_change_notice_for_helper(helper_a_obj, a.shift, "unassigned", role=a.role),
+        build_shift_change_notice_for_helper(helper_a_obj, b.shift, "assigned", role=b.role),
+        build_shift_change_notice_for_helper(helper_b_obj, b.shift, "unassigned", role=b.role),
+        build_shift_change_notice_for_helper(helper_b_obj, a.shift, "assigned", role=a.role),
+    ]
+
     a.helper_id, b.helper_id = helper_b_id, helper_a_id
 
     # Verfügbarkeiten defensiv ergänzen
@@ -1331,6 +1380,8 @@ async def admin_swap_do(request: Request, db: Session = Depends(get_db)):
             db.add(models.Availability(helper_id=hid, day_id=shift.day_id))
 
     db.commit()
+    for msg in swap_msgs:
+        send_in_background(background_tasks, deliver, msg, label="admin_swap_notice")
     return RedirectResponse("/admin/swap?flash=swapped", status_code=303)
 
 
