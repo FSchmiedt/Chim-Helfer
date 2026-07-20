@@ -23,10 +23,31 @@ from ..auth import (
 from ..config import settings
 from ..csv_io import emails_to_csv, helpers_to_csv, import_helpers_from_csv
 from ..database import get_db
+from ..shift_log import (
+    ACTION_LABELS,
+    SOURCE_LABELS,
+    TRACKING_SINCE,
+    last_change_map,
+    log_assignment,
+    log_shift_change,
+    log_transfer,
+)
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory="app/templates")
+
+
+def _fmt_local(dt) -> str:
+    """UTC-Zeitstempel als deutsche Ortszeit ausgeben (fuer die Templates)."""
+    if not dt:
+        return "–"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ZoneInfo("Europe/Berlin")).strftime("%d.%m.%Y %H:%M")
+
+
+templates.env.filters["localdt"] = _fmt_local
 
 
 # ---------------------------------------------------------------------------
@@ -418,9 +439,12 @@ def helpers_list(
     views_lt: str | None = Query(None),
     me_before: str | None = Query(None),
     q: str | None = Query(None),
+    sort: str | None = Query(None),  # "changed" (default) | "created" | "name"
 ):
     if (r := require_admin_redirect(request)):
         return r
+
+    sort = sort if sort in ("changed", "created", "name") else "changed" 
 
     day_id_int = _parse_int_or_none(day_id)
     area_id_int = _parse_int_or_none(area_id)
@@ -467,6 +491,22 @@ def helpers_list(
         )
     helpers = query.order_by(models.Helper.created_at.desc()).distinct().all()
 
+    # Letzte Schichtaenderung je Helfer:in – eine gruppierte Abfrage.
+    changed_at = last_change_map(db)
+
+    if sort == "name":
+        helpers.sort(key=lambda h: (h.last_name.lower(), h.first_name.lower()))
+    elif sort == "changed":
+        # Zuletzt geaendert zuerst; wer seit Tracking-Start keine Aenderung
+        # hatte, landet hinten (dort bleibt die Anmelde-Reihenfolge erhalten,
+        # weil Pythons sort stabil ist). Bewusst in Python statt per SQL:
+        # ein ORDER BY auf eine Subquery vertraegt sich in Postgres nicht mit
+        # dem DISTINCT weiter oben.
+        helpers.sort(
+            key=lambda h: (h.id in changed_at, changed_at.get(h.id) or datetime.min),
+            reverse=True,
+        )
+
     days = db.query(models.FestivalDay).order_by(models.FestivalDay.sort_order, models.FestivalDay.date).all()
     areas = db.query(models.Area).order_by(models.Area.sort_order, models.Area.name).all()
 
@@ -490,6 +530,9 @@ def helpers_list(
             all_tags=_all_tags(db),
             segment_labels=SEGMENT_LABELS,
             q=q or "",
+            sort=sort,
+            changed_at=changed_at,
+            tracking_since=TRACKING_SINCE,
         ),
     )
 
@@ -571,6 +614,15 @@ def helper_detail(helper_id: int, request: Request, db: Session = Depends(get_db
         .all()
     )
 
+    # Historie aller Schichtaenderungen, neueste zuerst.
+    changes = (
+        db.query(models.ShiftChangeLog)
+        .filter(models.ShiftChangeLog.helper_id == helper_id)
+        .options(joinedload(models.ShiftChangeLog.counterpart))
+        .order_by(models.ShiftChangeLog.created_at.desc(), models.ShiftChangeLog.id.desc())
+        .all()
+    )
+
     return templates.TemplateResponse(
         "admin/helper_detail.html",
         _ctx(
@@ -584,6 +636,10 @@ def helper_detail(helper_id: int, request: Request, db: Session = Depends(get_db
             trust_ids=trust_ids,
             pref_areas=pref_areas,
             assignments=assignments,
+            changes=changes,
+            action_labels=ACTION_LABELS,
+            source_labels=SOURCE_LABELS,
+            tracking_since=TRACKING_SINCE,
         ),
     )
 
@@ -1018,6 +1074,11 @@ def shift_delete(shift_id: int, request: Request, db: Session = Depends(get_db))
         return r
     shift = db.get(models.Shift, shift_id)
     if shift:
+        # Die Zuweisungen verschwinden per Cascade – vorher für alle
+        # betroffenen Helfer:innen eine Austragung protokollieren.
+        for a in list(shift.assignments):
+            log_assignment(db, a, action="unassigned", source="shift_deleted")
+        db.flush()
         db.delete(shift)
         db.commit()
     return RedirectResponse("/admin/shifts", status_code=303)
@@ -1036,7 +1097,16 @@ async def shift_assign(shift_id: int, request: Request, db: Session = Depends(ge
     existing = db.query(models.ShiftAssignment).filter_by(shift_id=shift_id, helper_id=helper_id).one_or_none()
     if existing:
         # Reine Rollenänderung an einer bestehenden Zuweisung – nichts zu prüfen.
+        old_role_name = existing.role.name if existing.role else None
         existing.role_id = role_id
+        db.flush()
+        new_role = db.get(models.Role, role_id) if role_id else None
+        if (new_role.name if new_role else None) != old_role_name:
+            log_shift_change(
+                db, helper_id=helper_id, shift=existing.shift,
+                action="role_changed", source="admin", role=new_role,
+                note=f"vorher: {old_role_name or 'ohne Rolle'}",
+            )
         db.commit()
         return RedirectResponse(f"/admin/shifts/{shift_id}", status_code=303)
 
@@ -1061,6 +1131,11 @@ async def shift_assign(shift_id: int, request: Request, db: Session = Depends(ge
             )
 
     db.add(models.ShiftAssignment(shift_id=shift_id, helper_id=helper_id, role_id=role_id))
+    log_shift_change(
+        db, helper_id=helper_id, shift=db.get(models.Shift, shift_id),
+        action="assigned", source="admin",
+        role=db.get(models.Role, role_id) if role_id else None,
+    )
     db.commit()
     return RedirectResponse(f"/admin/shifts/{shift_id}", status_code=303)
 
@@ -1069,7 +1144,15 @@ async def shift_assign(shift_id: int, request: Request, db: Session = Depends(ge
 def shift_unassign(shift_id: int, helper_id: int, request: Request, db: Session = Depends(get_db)):
     if (r := require_admin_redirect(request)):
         return r
-    db.query(models.ShiftAssignment).filter_by(shift_id=shift_id, helper_id=helper_id).delete()
+    assignment = (
+        db.query(models.ShiftAssignment)
+        .filter_by(shift_id=shift_id, helper_id=helper_id)
+        .one_or_none()
+    )
+    if assignment:
+        # Erst protokollieren (der Snapshot braucht die Zuweisung), dann löschen.
+        log_assignment(db, assignment, action="unassigned", source="admin")
+        db.delete(assignment)
     db.commit()
     return RedirectResponse(f"/admin/shifts/{shift_id}", status_code=303)
 
@@ -1226,6 +1309,11 @@ async def admin_swap_do(request: Request, db: Session = Depends(get_db)):
                 f"&a={assign_a_id}&b={assign_b_id}",
                 status_code=303,
             )
+
+    log_transfer(db, shift=a.shift, from_helper_id=helper_a_id,
+                 to_helper_id=helper_b_id, source="admin_swap", role=a.role)
+    log_transfer(db, shift=b.shift, from_helper_id=helper_b_id,
+                 to_helper_id=helper_a_id, source="admin_swap", role=b.role)
 
     a.helper_id, b.helper_id = helper_b_id, helper_a_id
 

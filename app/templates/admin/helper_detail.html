@@ -304,6 +304,47 @@
     {% endif %}
   </div>
 
+  <!-- Historie der Schichtänderungen -->
+  <div id="historie" class="bg-white border border-slate-200 rounded-lg p-5 lg:col-span-3">
+    <div class="flex items-baseline justify-between mb-3">
+      <h2 class="font-semibold">Historie der Schichtänderungen</h2>
+      <span class="text-xs text-slate-400">Protokoll seit {{ tracking_since.strftime('%d.%m.%Y') }}</span>
+    </div>
+    {% if changes %}
+    <ol class="divide-y divide-slate-100 text-sm">
+      {% for c in changes %}
+      <li class="py-2 flex flex-wrap items-baseline gap-x-2">
+        <span class="text-xs text-slate-500 tabular-nums w-32 shrink-0">{{ c.created_at|localdt }}</span>
+        {% if c.action == 'assigned' %}
+          <span class="px-1.5 py-0.5 rounded text-xs bg-emerald-100 text-emerald-700">+ eingetragen</span>
+        {% elif c.action == 'unassigned' %}
+          <span class="px-1.5 py-0.5 rounded text-xs bg-red-100 text-red-700">− ausgetragen</span>
+        {% else %}
+          <span class="px-1.5 py-0.5 rounded text-xs bg-sky-100 text-sky-700">Rolle geändert</span>
+        {% endif %}
+        <span class="font-medium">
+          {% if c.shift_id %}
+            <a href="/admin/shifts/{{ c.shift_id }}" class="hover:text-indigo-600">{{ c.shift_text }}</a>
+          {% else %}
+            {{ c.shift_text }}
+          {% endif %}
+        </span>
+        <span class="text-xs text-slate-500">
+          {{ source_labels.get(c.source, c.source) }}{% if c.counterpart %} ·
+            {% if c.action == 'assigned' %}von{% else %}an{% endif %}
+            <a href="/admin/helpers/{{ c.counterpart.id }}" class="hover:text-indigo-600">{{ c.counterpart.first_name }} {{ c.counterpart.last_name }}</a>
+          {% endif %}{% if c.note %} · {{ c.note }}{% endif %}
+        </span>
+      </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="text-sm text-slate-500">
+      Seit {{ tracking_since.strftime('%d.%m.%Y') }} keine Schichtänderung protokolliert.
+    </p>
+    {% endif %}
+  </div>
+
 </div>
 
 {% endblock %}

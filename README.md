@@ -145,6 +145,7 @@ chimaera-helfer-tool/
 │   ├── auth.py               Admin- UND Helfer-Session (signierte Cookies)
 │   ├── passwords.py          PBKDF2-Hashing (stdlib)
 │   ├── csv_io.py             CSV-Import/-Export
+│   ├── shift_log.py          Protokoll aller Schichtänderungen
 │   ├── email_sender.py       SMTP-Versand (Reset, Verify, Swap, Verteiler)
 │   └── routers/
 │       ├── public.py         /, /register, /login, /logout, /forgot,
@@ -226,6 +227,42 @@ Im Panel „Pfand" auf `/admin/helpers/<id>`:
 Helfer-Liste hat eine Pfand-Spalte (— / bezahlt / ✓ zurück) und einen
 Pfand-Filter. Dashboard zeigt zwei Kennzahlen: „bezahlt, noch nicht zurück"
 und „vollständig abgewickelt".
+
+## Protokoll der Schichtänderungen
+
+Jede Änderung an einer Schichtzuweisung landet in der Tabelle
+`shift_change_log` — append-only, nichts wird nachträglich geändert oder
+gelöscht. Protokolliert wird ab **20.07.2026** (`TRACKING_SINCE` in
+`app/shift_log.py`); ältere Zuweisungen lassen sich nicht rekonstruieren und
+erscheinen deshalb nicht in der Historie.
+
+Erfasst werden alle Wege, auf denen sich eine Zuweisung ändern kann:
+
+| Quelle           | Auslöser                                          |
+|------------------|---------------------------------------------------|
+| `self_signup`    | Helfer:in trägt sich unter `/schichten` ein        |
+| `self_withdraw`  | Helfer:in trägt sich unter `/me` aus               |
+| `admin`          | Zuweisung, Austragung oder Rollenwechsel im Admin  |
+| `admin_swap`     | Tausch über `/admin/swap`                          |
+| `swap_board`     | 1:1-Tausch über das Board                          |
+| `swap_request`   | Angenommene direkte Tausch-Anfrage                 |
+| `shift_deleted`  | Schicht wurde gelöscht, Zuweisungen fielen weg     |
+
+Bei Tauschvorgängen entstehen zwei Zeilen (raus bei A, rein bei B), die
+wechselseitig auf die andere Person verweisen. Bereich, Tag, Zeit und Rolle
+werden als Text mitgeschrieben, damit die Historie auch nach dem Löschen einer
+Schicht lesbar bleibt.
+
+**Wo man das sieht:**
+
+- `/admin/helpers` — Spalte „Schichtänderung" mit dem Zeitpunkt der letzten
+  Änderung; Standard-Sortierung ist „letzte Schichtänderung" zuerst.
+  Umschaltbar auf Anmeldedatum oder Name (`?sort=changed|created|name`).
+- `/admin/helpers/<id>` — Panel „Historie der Schichtänderungen" mit der
+  vollständigen Liste, neueste zuerst.
+
+Die Tabelle wird beim Start (`Base.metadata.create_all`) bzw. durch
+`python init_db.py` automatisch angelegt — keine Spalten-Migration nötig.
 
 ## CSV-Import / -Export
 

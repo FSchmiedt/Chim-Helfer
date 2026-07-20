@@ -18,6 +18,7 @@ from .. import models
 from ..auth import HELPER_COOKIE_NAME, get_current_helper, require_helper_redirect
 from ..config import settings
 from ..database import get_db
+from ..shift_log import log_shift_change, log_transfer
 
 
 # Lokal definiert, damit nicht zirkulär auf public.py zugegriffen werden muss.
@@ -431,6 +432,11 @@ def shift_signup_book(shift_id: int, request: Request, db: Session = Depends(get
         if shift.day_id not in avail_day_ids:
             db.add(models.Availability(helper_id=helper.id, day_id=shift.day_id))
 
+        log_shift_change(
+            db, helper_id=helper.id, shift=shift,
+            action="assigned", source="self_signup",
+        )
+
         db.commit()
     except Exception:
         db.rollback()
@@ -495,6 +501,11 @@ def me_withdraw_assignment(assignment_id: int, request: Request, db: Session = D
     db.query(models.ShiftSwapRequest).filter(
         models.ShiftSwapRequest.from_assignment_id == assignment_id
     ).delete(synchronize_session=False)
+
+    log_shift_change(
+        db, helper_id=helper.id, shift=assignment.shift,
+        action="unassigned", source="self_withdraw", role=assignment.role,
+    )
 
     db.delete(assignment)
     db.commit()
@@ -864,6 +875,20 @@ async def board_take(offer_id: int, request: Request, background_tasks: Backgrou
         if gday not in a_avail:
             db.add(models.Availability(helper_id=old_a_helper_id, day_id=gday))
 
+    # Protokoll: A's Schicht geht an mich, meine Gegenschicht (falls es eine
+    # gibt) an A. Jeweils zwei Zeilen, damit beide Historien vollständig sind.
+    log_transfer(
+        db, shift=a_assignment.shift,
+        from_helper_id=old_a_helper_id, to_helper_id=helper.id,
+        source="swap_board", role=a_assignment.role,
+    )
+    if give_assignment:
+        log_transfer(
+            db, shift=give_assignment.shift,
+            from_helper_id=helper.id, to_helper_id=old_a_helper_id,
+            source="swap_board", role=give_assignment.role,
+        )
+
     offer.status = "taken"
     offer.taken_by_helper_id = helper.id
     offer.resolved_at = datetime.utcnow()
@@ -1038,6 +1063,12 @@ def me_swap_accept(request_id: int, request: Request, background_tasks: Backgrou
     assignment.helper_id = helper.id
     req.status = "accepted"
     req.resolved_at = datetime.utcnow()
+
+    log_transfer(
+        db, shift=assignment.shift,
+        from_helper_id=old_helper_id, to_helper_id=helper.id,
+        source="swap_request", role=assignment.role,
+    )
 
     # Availability nachziehen
     day_id = assignment.shift.day_id

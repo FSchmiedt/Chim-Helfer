@@ -125,6 +125,12 @@ class Helper(Base):
     tags: Mapped[list["HelperTag"]] = relationship(back_populates="helper", cascade="all, delete-orphan")
     role_trusts: Mapped[list["HelperRoleTrust"]] = relationship(back_populates="helper", cascade="all, delete-orphan")
     shift_assignments: Mapped[list["ShiftAssignment"]] = relationship(back_populates="helper", cascade="all, delete-orphan")
+    shift_changes: Mapped[list["ShiftChangeLog"]] = relationship(
+        back_populates="helper",
+        cascade="all, delete-orphan",
+        foreign_keys="ShiftChangeLog.helper_id",
+        order_by="ShiftChangeLog.created_at.desc()",
+    )
 
     # Helpers
     @property
@@ -239,6 +245,66 @@ class ShiftAssignment(Base):
     shift: Mapped["Shift"] = relationship(back_populates="assignments")
     helper: Mapped["Helper"] = relationship(back_populates="shift_assignments")
     role: Mapped[Optional["Role"]] = relationship()
+
+
+# ---------------------------------------------------------------------------
+# Änderungsprotokoll
+# ---------------------------------------------------------------------------
+class ShiftChangeLog(Base):
+    """Append-only Protokoll: wer wurde wann welcher Schicht zu-/abgeordnet.
+
+    Bereich/Tag/Zeit/Rolle werden als Text mitgeschrieben (Snapshot), damit die
+    Historie lesbar bleibt, wenn die Schicht später gelöscht wird. `shift_id`
+    steht dann auf NULL, die Zeile bleibt aber erhalten.
+
+    Geschrieben wird ausschließlich über `app/shift_log.py`.
+    """
+    __tablename__ = "shift_change_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    helper_id: Mapped[int] = mapped_column(
+        ForeignKey("helpers.id", ondelete="CASCADE"), index=True
+    )
+    shift_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("shifts.id", ondelete="SET NULL"), nullable=True
+    )
+
+    action: Mapped[str] = mapped_column(String(20), index=True)
+    # assigned | unassigned | role_changed
+    source: Mapped[str] = mapped_column(String(30))
+    # self_signup | self_withdraw | admin | admin_swap | swap_board |
+    # swap_request | shift_deleted
+
+    # Bei Tausch: die andere beteiligte Person.
+    counterpart_helper_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("helpers.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Snapshot der Schicht zum Zeitpunkt der Änderung
+    area_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    day_label: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    time_text: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    role_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True, default=datetime.utcnow)
+
+    helper: Mapped["Helper"] = relationship(
+        back_populates="shift_changes", foreign_keys=[helper_id]
+    )
+    counterpart: Mapped[Optional["Helper"]] = relationship(
+        foreign_keys=[counterpart_helper_id]
+    )
+
+    @property
+    def shift_text(self) -> str:
+        """Einzeilige Beschreibung der betroffenen Schicht."""
+        parts = [p for p in (self.area_name, self.day_label, self.time_text) if p]
+        base = " · ".join(parts) if parts else "Schicht"
+        if self.role_name:
+            base = f"{base} ({self.role_name})"
+        return base
 
 
 # ---------------------------------------------------------------------------
