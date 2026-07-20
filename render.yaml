@@ -4,7 +4,13 @@ services:
   - type: web
     name: chimaera-helfer-tool
     runtime: docker
-    plan: free
+    # WICHTIG: 'free' blockiert ausgehenden SMTP-Traffic (Ports 25/465/587) und
+    # legt den Service nach Inaktivität schlafen. Für zuverlässigen Mailversand
+    # (Passwort-Reset, Tausch-Benachrichtigungen) ist mind. 'starter' nötig.
+    # Steht hier 'free', setzt jeder Auto-Deploy eine manuelle Hochstufung im
+    # Dashboard wieder auf Free zurück – genau das war die Ursache der
+    # "manchmal klappt's, manchmal nicht"-Mails.
+    plan: starter
     region: frankfurt
     autoDeploy: true
     envVars:

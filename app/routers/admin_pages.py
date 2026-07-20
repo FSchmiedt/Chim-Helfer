@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import io
 from collections import defaultdict
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, Query, Request, UploadFile, File, status
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func
+from sqlalchemy import func, case, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from .. import models
@@ -25,6 +27,94 @@ from ..database import get_db
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory="app/templates")
+
+
+# ---------------------------------------------------------------------------
+# Segment-Filter (Markierungen + berechnete Gruppen)
+# ---------------------------------------------------------------------------
+SEGMENT_LABELS = {
+    "no_shifts": "ohne Schichten",
+    "below_soll": "unter Soll (inkl. ohne Schichten)",
+}
+
+
+def _assignment_count_subq():
+    """Anzahl Schichten je Helfer:in als korrelierte Subquery."""
+    return (
+        select(func.count(models.ShiftAssignment.id))
+        .where(models.ShiftAssignment.helper_id == models.Helper.id)
+        .scalar_subquery()
+    )
+
+
+def _soll_expr():
+    """Soll-Schichtzahl: 1 beim Ein-Schicht-Ticket, sonst MIN_SHIFTS."""
+    return case((models.Helper.wants_only_one_shift.is_(True), 1), else_=settings.MIN_SHIFTS)
+
+
+LOCAL_TZ = ZoneInfo("Europe/Berlin")
+
+
+def parse_local_dt(raw: str | None):
+    """'2026-07-20T14:00' als LOKALE Zeit lesen und nach UTC umrechnen.
+
+    last_me_at wird mit datetime.utcnow() geschrieben, liegt also in UTC.
+    Im Sommer ist Deutschland UTC+2 - ohne Umrechnung wuerde ein Filter auf
+    '14:00' in Wahrheit 16:00 deutscher Zeit bedeuten.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=LOCAL_TZ)
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def apply_segment_filters(query, tag: str | None, segments: list[str] | None,
+                          views_lt: int | None = None, me_before: str | None = None):
+    """Filtert nach Markierung (UND) und berechneten Gruppen (ODER untereinander).
+
+    Mehrere Segmente werden mit ODER verknuepft, weil sie sich ueberschneiden
+    (jede Person ohne Schichten ist auch unter Soll). Die Markierung wird
+    zusaetzlich mit UND angewendet.
+    """
+    if tag:
+        query = query.filter(
+            models.Helper.id.in_(
+                select(models.HelperTag.helper_id).where(models.HelperTag.tag == tag)
+            )
+        )
+    segments = [s for s in (segments or []) if s in SEGMENT_LABELS]
+    if segments:
+        cnt = _assignment_count_subq()
+        conds = []
+        if "no_shifts" in segments:
+            conds.append(cnt == 0)
+        if "below_soll" in segments:
+            conds.append(cnt < _soll_expr())
+        query = query.filter(or_(*conds))
+
+    # Wie oft wurde /me geoeffnet? NULL zaehlt als 0 (Spalte kam spaeter dazu).
+    if views_lt is not None:
+        query = query.filter(func.coalesce(models.Helper.me_view_count, 0) < views_lt)
+
+    # Seit wann nicht mehr reingeschaut? "nie" zaehlt immer mit.
+    cutoff = parse_local_dt(me_before)
+    if cutoff is not None:
+        query = query.filter(
+            or_(models.Helper.last_me_at.is_(None), models.Helper.last_me_at < cutoff)
+        )
+    return query
+
+
+def _all_tags(db: Session) -> list[str]:
+    """Alle vergebenen Markierungen, alphabetisch, fuer die Filter-Dropdowns."""
+    rows = db.query(models.HelperTag.tag).distinct().order_by(models.HelperTag.tag).all()
+    return [r[0] for r in rows]
 
 
 def _parse_int_or_none(value: str | None) -> int | None:
@@ -321,6 +411,10 @@ def helpers_list(
     experience: str | None = Query(None),  # "yes" | "no"
     pfand: str | None = Query(None),  # "unpaid" | "paid" | "returned"
     verified: str | None = Query(None),  # "yes" | "no"
+    tag: str | None = Query(None),
+    segment: list[str] | None = Query(None),
+    views_lt: str | None = Query(None),
+    me_before: str | None = Query(None),
     q: str | None = Query(None),
 ):
     if (r := require_admin_redirect(request)):
@@ -332,6 +426,7 @@ def helpers_list(
     query = db.query(models.Helper).options(
         joinedload(models.Helper.availabilities).joinedload(models.Availability.day),
         joinedload(models.Helper.preferences).joinedload(models.HelperAreaPreference.area),
+        joinedload(models.Helper.tags),
     )
     if day_id_int:
         query = query.join(models.Availability).filter(models.Availability.day_id == day_id_int)
@@ -359,6 +454,8 @@ def helpers_list(
         query = query.filter(models.Helper.email_verified_at.isnot(None))
     elif verified == "no":
         query = query.filter(models.Helper.email_verified_at.is_(None))
+    query = apply_segment_filters(query, tag, segment,
+                                  _parse_int_or_none(views_lt), me_before)
     if q:
         like = f"%{q.lower()}%"
         query = query.filter(
@@ -384,9 +481,57 @@ def helpers_list(
             experience=experience,
             pfand=pfand,
             verified=verified,
+            tag=tag,
+            segment=segment or [],
+            views_lt=views_lt or "",
+            me_before=me_before or "",
+            all_tags=_all_tags(db),
+            segment_labels=SEGMENT_LABELS,
             q=q or "",
         ),
     )
+
+
+@router.post("/helpers/tag")
+async def helpers_bulk_tag(request: Request, db: Session = Depends(get_db)):
+    """Vergibt oder entfernt eine Markierung fuer mehrere Helfer:innen auf einmal.
+
+    Kommt aus der Sammelaktion in der Helferliste. Bereits vorhandene
+    Markierungen werden nicht doppelt angelegt.
+    """
+    if (r := require_admin_redirect(request)):
+        return r
+
+    form = await request.form()
+    tag = (form.get("tag") or "").strip()[:50]
+    action = form.get("action") or "add"
+    helper_ids = [int(x) for x in form.getlist("helper_ids") if str(x).isdigit()]
+    back = form.get("back") or "/admin/helpers"
+
+    if not tag or not helper_ids:
+        return RedirectResponse(f"{back}{'&' if '?' in back else '?'}tagmsg=leer", status_code=303)
+
+    if action == "remove":
+        n = (
+            db.query(models.HelperTag)
+            .filter(models.HelperTag.tag == tag, models.HelperTag.helper_id.in_(helper_ids))
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        msg = f"{n}x+entfernt"
+    else:
+        vorhanden = {
+            t.helper_id
+            for t in db.query(models.HelperTag)
+            .filter(models.HelperTag.tag == tag, models.HelperTag.helper_id.in_(helper_ids))
+            .all()
+        }
+        neu = [hid for hid in helper_ids if hid not in vorhanden]
+        db.add_all([models.HelperTag(helper_id=hid, tag=tag) for hid in neu])
+        db.commit()
+        msg = f"{len(neu)}x+vergeben"
+
+    return RedirectResponse(f"{back}{'&' if '?' in back else '?'}tagmsg={msg}", status_code=303)
 
 
 @router.get("/helpers/{helper_id}", response_class=HTMLResponse)
@@ -1121,6 +1266,10 @@ def mail_page(
     day_id: str | None = Query(None),
     area_id: str | None = Query(None),
     status_filter: str | None = Query(None, alias="status"),
+    tag: str | None = Query(None),
+    segment: list[str] | None = Query(None),
+    views_lt: str | None = Query(None),
+    me_before: str | None = Query(None),
 ):
     if (r := require_admin_redirect(request)):
         return r
@@ -1141,7 +1290,9 @@ def mail_page(
         )
     if status_filter:
         query = query.filter(models.Helper.status == status_filter)
-    helpers = query.distinct().all()
+    query = apply_segment_filters(query, tag, segment,
+                                  _parse_int_or_none(views_lt), me_before)
+    helpers = query.order_by(models.Helper.last_name, models.Helper.first_name).distinct().all()
 
     days = db.query(models.FestivalDay).order_by(models.FestivalDay.sort_order, models.FestivalDay.date).all()
     areas = db.query(models.Area).order_by(models.Area.sort_order, models.Area.name).all()
@@ -1156,6 +1307,12 @@ def mail_page(
             day_id=day_id_int,
             area_id=area_id_int,
             status_filter=status_filter,
+            tag=tag,
+            segment=segment or [],
+            views_lt=views_lt or "",
+            me_before=me_before or "",
+            all_tags=_all_tags(db),
+            segment_labels=SEGMENT_LABELS,
         ),
     )
 
@@ -1217,6 +1374,12 @@ async def mail_send(request: Request, db: Session = Depends(get_db)):
             day_id=None,
             area_id=None,
             status_filter=None,
+            tag=None,
+            segment=[],
+            views_lt="",
+            me_before="",
+            all_tags=_all_tags(db),
+            segment_labels=SEGMENT_LABELS,
             flash_message=message,
             flash_success=success,
         ),
@@ -1254,6 +1417,10 @@ def export_emails(
     day_id: str | None = Query(None),
     area_id: str | None = Query(None),
     status_filter: str | None = Query(None, alias="status"),
+    tag: str | None = Query(None),
+    segment: list[str] | None = Query(None),
+    views_lt: str | None = Query(None),
+    me_before: str | None = Query(None),
 ):
     if (r := require_admin_redirect(request)):
         return r
@@ -1272,6 +1439,8 @@ def export_emails(
         )
     if status_filter:
         query = query.filter(models.Helper.status == status_filter)
+    query = apply_segment_filters(query, tag, segment,
+                                  _parse_int_or_none(views_lt), me_before)
     helpers = query.distinct().all()
     return Response(
         content=emails_to_csv(helpers),

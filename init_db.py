@@ -48,6 +48,9 @@ NEW_COLUMNS_BY_TABLE = {
         ("pfand_returned", "BOOLEAN"),
         ("pfand_returned_at", "TIMESTAMP"),
         ("wants_only_one_shift", "BOOLEAN"),
+        # Besuchszähler für /me – Ersatz für Lesebestätigungen bei Rundmails.
+        ("last_me_at", "TIMESTAMP"),
+        ("me_view_count", "INTEGER"),
     ],
     "shift_swap_offers": [
         ("want_type", "VARCHAR(10)"),
@@ -62,6 +65,7 @@ BACKFILLS = [
     ("helpers", "UPDATE helpers SET pfand_paid = 0 WHERE pfand_paid IS NULL"),
     ("helpers", "UPDATE helpers SET pfand_returned = 0 WHERE pfand_returned IS NULL"),
     ("helpers", "UPDATE helpers SET wants_only_one_shift = 0 WHERE wants_only_one_shift IS NULL"),
+    ("helpers", "UPDATE helpers SET me_view_count = 0 WHERE me_view_count IS NULL"),
     ("shift_swap_offers", "UPDATE shift_swap_offers SET want_type = 'day' WHERE want_type IS NULL"),
     ("shift_swap_offers", "UPDATE shift_swap_offers SET allow_giveaway = 0 WHERE allow_giveaway IS NULL"),
 ]

@@ -109,6 +109,13 @@ def me_dashboard(request: Request, db: Session = Depends(get_db)):
         .count()
     )
 
+    # Besuch der eigenen Übersicht protokollieren (Ersatz für Lesebestätigung).
+    # Bewusst ohne eigenes try/except: schlägt das commit fehl, soll der normale
+    # Fehlerweg greifen statt still zu schlucken.
+    helper.last_me_at = datetime.utcnow()
+    helper.me_view_count = (helper.me_view_count or 0) + 1
+    db.commit()
+
     # Tage für Availability-Anzeige
     days = db.query(models.FestivalDay).order_by(models.FestivalDay.sort_order, models.FestivalDay.date).all()
     avail_day_ids = {a.day_id for a in helper.availabilities}

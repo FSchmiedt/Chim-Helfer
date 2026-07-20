@@ -78,6 +78,11 @@ class Helper(Base):
     email_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     email_verification_token: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
 
+    # Wann hat die Person zuletzt ihre eigene Schichtübersicht (/me) geöffnet?
+    # Ersetzt die unzuverlässige Lesebestätigung: misst tatsächliches Nachschauen.
+    last_me_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    me_view_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=0)
+
     # Zahlungsdaten für Pfand etc.
     iban: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     paypal: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
@@ -117,6 +122,7 @@ class Helper(Base):
 
     availabilities: Mapped[list["Availability"]] = relationship(back_populates="helper", cascade="all, delete-orphan")
     preferences: Mapped[list["HelperAreaPreference"]] = relationship(back_populates="helper", cascade="all, delete-orphan")
+    tags: Mapped[list["HelperTag"]] = relationship(back_populates="helper", cascade="all, delete-orphan")
     role_trusts: Mapped[list["HelperRoleTrust"]] = relationship(back_populates="helper", cascade="all, delete-orphan")
     shift_assignments: Mapped[list["ShiftAssignment"]] = relationship(back_populates="helper", cascade="all, delete-orphan")
 
@@ -145,6 +151,24 @@ class Availability(Base):
 
     helper: Mapped["Helper"] = relationship(back_populates="availabilities")
     day: Mapped["FestivalDay"] = relationship(back_populates="availabilities")
+
+
+class HelperTag(Base):
+    """Freie Markierung an einer Helfer:in, z.B. 'zugewiesen'.
+
+    Bewusst als eigene Tabelle statt als Komma-Spalte: so lässt sich sauber
+    filtern und eine Markierung gezielt wieder entfernen, ohne Stringgefummel.
+    """
+
+    __tablename__ = "helper_tags"
+    __table_args__ = (UniqueConstraint("helper_id", "tag", name="uq_helper_tag"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    helper_id: Mapped[int] = mapped_column(ForeignKey("helpers.id", ondelete="CASCADE"), index=True)
+    tag: Mapped[str] = mapped_column(String(50), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    helper: Mapped["Helper"] = relationship(back_populates="tags")
 
 
 class HelperAreaPreference(Base):

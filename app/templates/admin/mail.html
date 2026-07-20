@@ -3,7 +3,7 @@
 {% block content %}
 
 <h1 class="text-2xl font-semibold mb-2">Mail-Verteiler</h1>
-<p class="text-slate-500 text-sm mb-6">Filtere nach Einsatzbereich, Tag oder Status. Dann via SMTP versenden – oder Adressen kopieren und ins Mailprogramm übernehmen.</p>
+<p class="text-slate-500 text-sm mb-6">Filtere nach Einsatzbereich, Festivaltag, Status, Markierung oder Gruppe. Dann via SMTP versenden – oder Adressen kopieren und ins Mailprogramm übernehmen.</p>
 
 {% if flash_message %}
 <div class="mb-4 p-3 rounded text-sm whitespace-pre-line
@@ -15,7 +15,7 @@
 <!-- Filter -->
 <form method="get" class="bg-white border border-slate-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-4 gap-3">
   <div>
-    <label class="block text-xs text-slate-500 mb-1">Tag</label>
+    <label class="block text-xs text-slate-500 mb-1">Festivaltag</label>
     <select name="day_id" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
       <option value="">– alle –</option>
       {% for d in days %}<option value="{{ d.id }}" {% if day_id == d.id %}selected{% endif %}>{{ d.label }}</option>{% endfor %}
@@ -38,7 +38,37 @@
       <option value="withdrawn" {% if status_filter == 'withdrawn' %}selected{% endif %}>zurückgezogen</option>
     </select>
   </div>
-  <div class="flex items-end">
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Markierung</label>
+    <select name="tag" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+      <option value="">– alle –</option>
+      {% for t in all_tags %}<option value="{{ t }}" {% if tag == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="md:col-span-3">
+    <label class="block text-xs text-slate-500 mb-1">Gruppe (Mehrfachauswahl, ODER-verknüpft)</label>
+    <div class="flex flex-wrap gap-4 pt-1">
+      {% for key, label in segment_labels.items() %}
+      <label class="flex items-center gap-1.5 text-sm">
+        <input type="checkbox" name="segment" value="{{ key }}"
+               {% if key in segment %}checked{% endif %} class="rounded border-slate-300">
+        {{ label }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">/me-Aufrufe weniger als</label>
+    <input type="number" name="views_lt" min="1" step="1" value="{{ views_lt }}" placeholder="z.B. 1"
+           class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+  </div>
+  <div class="md:col-span-2">
+    <label class="block text-xs text-slate-500 mb-1">Nicht mehr in /me seit (deutsche Zeit)</label>
+    <input type="datetime-local" name="me_before" value="{{ me_before }}"
+           class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+    <p class="text-[11px] text-slate-400 mt-0.5">„nie geöffnet“ ist immer mit dabei.</p>
+  </div>
+  <div class="md:col-span-4 flex justify-end">
     <button class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">Filtern</button>
   </div>
 </form>
@@ -52,7 +82,7 @@
       <div class="flex gap-1">
         <button type="button" onclick="copyEmails(this)"
                 class="text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded">📋 kopieren</button>
-        <a href="/admin/export/emails.csv?{% if day_id %}day_id={{ day_id }}&{% endif %}{% if area_id %}area_id={{ area_id }}&{% endif %}{% if status_filter %}status={{ status_filter }}{% endif %}"
+        <a href="/admin/export/emails.csv?{% if day_id %}day_id={{ day_id }}&{% endif %}{% if area_id %}area_id={{ area_id }}&{% endif %}{% if status_filter %}status={{ status_filter }}&{% endif %}{% if tag %}tag={{ tag }}&{% endif %}{% for s in segment %}segment={{ s }}&{% endfor %}{% if views_lt %}views_lt={{ views_lt }}&{% endif %}{% if me_before %}me_before={{ me_before }}&{% endif %}"
            class="text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded">⬇ CSV</a>
       </div>
     </div>
