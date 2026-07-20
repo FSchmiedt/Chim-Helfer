@@ -22,6 +22,103 @@
 </div>
 {% endif %}
 
+<!-- Filter -->
+<form method="get" class="bg-white border border-slate-200 rounded-lg p-4 mb-4 grid grid-cols-1 md:grid-cols-7 gap-3">
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Suche</label>
+    <input type="search" name="q" value="{{ q }}" placeholder="Name oder Email"
+           class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm" />
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Tag</label>
+    <select name="day_id" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+      <option value="">– alle –</option>
+      {% for d in days %}
+        <option value="{{ d.id }}" {% if day_id == d.id %}selected{% endif %}>{{ d.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Bereich</label>
+    <select name="area_id" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+      <option value="">– alle –</option>
+      {% for a in areas %}
+        <option value="{{ a.id }}" {% if area_id == a.id %}selected{% endif %}>{{ a.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Status</label>
+    <select name="status" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+      <option value="">– alle –</option>
+      <option value="registered" {% if status_filter == 'registered' %}selected{% endif %}>angemeldet</option>
+      <option value="confirmed" {% if status_filter == 'confirmed' %}selected{% endif %}>bestätigt</option>
+      <option value="declined" {% if status_filter == 'declined' %}selected{% endif %}>abgelehnt</option>
+      <option value="withdrawn" {% if status_filter == 'withdrawn' %}selected{% endif %}>zurückgezogen</option>
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Erfahrung</label>
+    <select name="experience" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+      <option value="">– egal –</option>
+      <option value="yes" {% if experience == 'yes' %}selected{% endif %}>ja, schon dabei</option>
+      <option value="no" {% if experience == 'no' %}selected{% endif %}>neu dabei</option>
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Pfand</label>
+    <select name="pfand" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+      <option value="">– egal –</option>
+      <option value="unpaid" {% if pfand == 'unpaid' %}selected{% endif %}>noch nicht bezahlt</option>
+      <option value="paid" {% if pfand == 'paid' %}selected{% endif %}>bezahlt (noch nicht zurück)</option>
+      <option value="returned" {% if pfand == 'returned' %}selected{% endif %}>zurückgegeben</option>
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Email-Verifikation</label>
+    <select name="verified" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+      <option value="">– egal –</option>
+      <option value="yes" {% if verified == 'yes' %}selected{% endif %}>verifiziert</option>
+      <option value="no" {% if verified == 'no' %}selected{% endif %}>noch offen</option>
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Markierung</label>
+    <select name="tag" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+      <option value="">– alle –</option>
+      {% for t in all_tags %}
+        <option value="{{ t }}" {% if tag == t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="md:col-span-3">
+    <label class="block text-xs text-slate-500 mb-1">Gruppe (Mehrfachauswahl, ODER-verknüpft)</label>
+    <div class="flex flex-wrap gap-4 pt-1">
+      {% for key, label in segment_labels.items() %}
+      <label class="flex items-center gap-1.5 text-sm">
+        <input type="checkbox" name="segment" value="{{ key }}"
+               {% if key in segment %}checked{% endif %}
+               class="rounded border-slate-300">
+        {{ label }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">/me-Aufrufe weniger als</label>
+    <input type="number" name="views_lt" min="1" step="1" value="{{ views_lt }}" placeholder="z.B. 1"
+           class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+  </div>
+  <div class="md:col-span-2">
+    <label class="block text-xs text-slate-500 mb-1">Nicht mehr in /me seit</label>
+    <input type="datetime-local" name="me_before" value="{{ me_before }}"
+           class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+  </div>
+  <div class="md:col-span-7 flex justify-end">
+    <button class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">Filtern</button>
+  </div>
+</form>
+
 <!-- Sammelaktion: Markierung vergeben/entfernen -->
 {% if request.query_params.get('tagmsg') %}
 <div class="mb-3 p-3 rounded bg-green-50 border border-green-200 text-green-800 text-sm">
