@@ -18,6 +18,32 @@ class MailError(RuntimeError):
     pass
 
 
+def send_in_background(background_tasks, func, *args, label: str = "mail", **kwargs) -> None:
+    """Haengt einen Mailversand als Hintergrund-Task an die Antwort an.
+
+    Warum: SMTP kostet je nach Server 1-2 Sekunden (TCP + TLS + Login + Zustellung),
+    im schlimmsten Fall bis zum Timeout. Frueher lief das mitten im Request, die
+    Seite kam also erst NACH dem Versand. Jetzt geht die Antwort sofort raus und
+    der Versand laeuft danach weiter - auch wenn die Person die Seite schon
+    verlassen hat.
+
+    Fehler landen im Log statt beim Nutzer: Zu diesem Zeitpunkt ist die Antwort
+    bereits ausgeliefert, wir koennen sie nicht mehr aendern. Bei Reset- und
+    Verifikationsmails ist das ohnehin gewollt, damit man ueber die Rueckmeldung
+    nicht herausfinden kann, welche Adressen registriert sind.
+    """
+    def _runner():
+        try:
+            func(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{label}] Mailversand fehlgeschlagen: {exc}")
+
+    if background_tasks is None:      # Fallback, z.B. in Tests
+        _runner()
+    else:
+        background_tasks.add_task(_runner)
+
+
 def _safe_formataddr(name: str | None, address: str) -> str:
     """Wie email.utils.formataddr, aber mit UTF-8-Fallback für Umlaute/Akzente.
 
@@ -68,10 +94,10 @@ def send_mail(to_addresses: list[str], subject: str, body: str, bcc: bool = True
 
     try:
         if settings.SMTP_USE_TLS:
-            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30)
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=settings.SMTP_TIMEOUT)
             server.starttls()
         else:
-            server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30)
+            server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=settings.SMTP_TIMEOUT)
         server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
 
         # Beim BCC: wir müssen die Empfänger einzeln ans server.sendmail() geben
@@ -123,10 +149,10 @@ def send_personalized(
     skipped: list[tuple[str, str]] = []
 
     if settings.SMTP_USE_TLS:
-        server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30)
+        server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=settings.SMTP_TIMEOUT)
         server.starttls()
     else:
-        server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30)
+        server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=settings.SMTP_TIMEOUT)
     try:
         server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
         for email, first_name, body in helpers_and_bodies:
@@ -184,10 +210,10 @@ def _send_single(to_email: str, to_name: str, subject: str, body: str,
 
     try:
         if settings.SMTP_USE_TLS:
-            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30)
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=settings.SMTP_TIMEOUT)
             server.starttls()
         else:
-            server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30)
+            server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=settings.SMTP_TIMEOUT)
         server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
         server.sendmail(settings.SMTP_FROM_ADDRESS, recipients, msg.as_string())
         server.quit()
@@ -195,36 +221,61 @@ def _send_single(to_email: str, to_name: str, subject: str, body: str,
         raise MailError(f"SMTP-Fehler: {exc}") from exc
 
 
+def deliver(prepared: dict) -> None:
+    """Verschickt eine vorbereitete Nachricht. Braucht KEINE DB-Session mehr.
+
+    Genau deshalb getrennt: die build_*-Funktionen lesen ORM-Objekte (und damit
+    Lazy-Loads wie assignment.shift.area.name) und muessen im Request laufen,
+    solange die Session offen ist. Nur dieses reine String-Versenden wandert in
+    den Hintergrund-Task.
+    """
+    _send_single(prepared["to_email"], prepared["to_name"], prepared["subject"],
+                 prepared["body"], cc=prepared.get("cc"))
+
+
+def build_password_reset_message(helper, reset_url: str) -> dict:
+    return {
+        "to_email": helper.email,
+        "to_name": helper.first_name,
+        "subject": f"Passwort zurücksetzen – {settings.FESTIVAL_NAME}",
+        "body": (
+            f"Hallo {helper.first_name},\n\n"
+            f"du hast angefragt, dein Passwort fürs {settings.FESTIVAL_NAME} Helfer-Tool zurückzusetzen.\n\n"
+            f"Klick auf diesen Link, um ein neues Passwort zu setzen (gilt 2 Stunden):\n\n"
+            f"{reset_url}\n\n"
+            f"Warst du das nicht? Einfach ignorieren – dann passiert nichts.\n\n"
+            f"Liebe Grüße\nDas Helfer-Team"
+        ),
+    }
+
+
 def send_password_reset_email(helper, reset_url: str) -> None:
-    subject = f"Passwort zurücksetzen – {settings.FESTIVAL_NAME}"
-    body = (
-        f"Hallo {helper.first_name},\n\n"
-        f"du hast angefragt, dein Passwort fürs {settings.FESTIVAL_NAME} Helfer-Tool zurückzusetzen.\n\n"
-        f"Klick auf diesen Link, um ein neues Passwort zu setzen (gilt 2 Stunden):\n\n"
-        f"{reset_url}\n\n"
-        f"Warst du das nicht? Einfach ignorieren – dann passiert nichts.\n\n"
-        f"Liebe Grüße\nDas Helfer-Team"
-    )
-    _send_single(helper.email, helper.first_name, subject, body)
+    deliver(build_password_reset_message(helper, reset_url))
+
+
+def build_verification_message(helper, verify_url: str, cc: str | None = None) -> dict:
+    return {
+        "to_email": helper.email,
+        "to_name": helper.first_name,
+        "cc": cc,
+        "subject": f"Bitte bestätige deine Email – {settings.FESTIVAL_NAME}",
+        "body": (
+            f"Hallo {helper.first_name},\n\n"
+            f"vielen Dank für deine Anmeldung als Helfer:in beim {settings.FESTIVAL_NAME}!\n\n"
+            f"Bitte bestätige deine Email-Adresse, indem du auf den folgenden Link klickst:\n\n"
+            f"{verify_url}\n\n"
+            f"Wenn du dich nicht angemeldet hast, ignoriere diese Mail einfach.\n\n"
+            f"Liebe Grüße\nDas Helfer-Team"
+        ),
+    }
 
 
 def send_verification_email(helper, verify_url: str, cc: str | None = None) -> None:
-    """Verifikations-Mail. Wenn `cc` gesetzt ist, bekommt die Adresse eine Kopie."""
-    subject = f"Bitte bestätige deine Email – {settings.FESTIVAL_NAME}"
-    body = (
-        f"Hallo {helper.first_name},\n\n"
-        f"vielen Dank für deine Anmeldung als Helfer:in beim {settings.FESTIVAL_NAME}!\n\n"
-        f"Bitte bestätige deine Email-Adresse, indem du auf den folgenden Link klickst:\n\n"
-        f"{verify_url}\n\n"
-        f"Wenn du dich nicht angemeldet hast, ignoriere diese Mail einfach.\n\n"
-        f"Liebe Grüße\nDas Helfer-Team"
-    )
-    _send_single(helper.email, helper.first_name, subject, body, cc=cc)
+    deliver(build_verification_message(helper, verify_url, cc))
 
 
-def send_swap_request_email(to_helper, from_helper, assignment, message: str | None) -> None:
+def build_swap_request_message(to_helper, from_helper, assignment, message: str | None) -> dict:
     shift = assignment.shift
-    subject = f"Tausch-Anfrage von {from_helper.first_name} – {settings.FESTIVAL_NAME}"
     body_parts = [
         f"Hallo {to_helper.first_name},",
         "",
@@ -245,31 +296,54 @@ def send_swap_request_email(to_helper, from_helper, assignment, message: str | N
         "",
         "Liebe Grüße\nDas Helfer-Team",
     ]
-    _send_single(to_helper.email, to_helper.first_name, subject, "\n".join(body_parts))
+    return {
+        "to_email": to_helper.email,
+        "to_name": to_helper.first_name,
+        "subject": f"Tausch-Anfrage von {from_helper.first_name} – {settings.FESTIVAL_NAME}",
+        "body": "\n".join(body_parts),
+    }
+
+
+def send_swap_request_email(to_helper, from_helper, assignment, message: str | None) -> None:
+    deliver(build_swap_request_message(to_helper, from_helper, assignment, message))
+
+
+def build_swap_accepted_message(from_helper, by_helper, assignment) -> dict:
+    shift = assignment.shift
+    return {
+        "to_email": from_helper.email,
+        "to_name": from_helper.first_name,
+        "subject": f"Deine Schicht wurde übernommen – {settings.FESTIVAL_NAME}",
+        "body": (
+            f"Hallo {from_helper.first_name},\n\n"
+            f"{by_helper.first_name} {by_helper.last_name} hat deine Tausch-Anfrage angenommen.\n\n"
+            f"Die Schicht ({shift.area.name}, {shift.day.label} {shift.time_range}) "
+            f"ist jetzt {by_helper.first_name} zugewiesen und du bist raus.\n\n"
+            f"Liebe Grüße\nDas Helfer-Team"
+        ),
+    }
 
 
 def send_swap_accepted_email(from_helper, by_helper, assignment) -> None:
+    deliver(build_swap_accepted_message(from_helper, by_helper, assignment))
+
+
+def build_swap_taken_message(from_helper, by_helper, assignment) -> dict:
     shift = assignment.shift
-    subject = f"Deine Schicht wurde übernommen – {settings.FESTIVAL_NAME}"
-    body = (
-        f"Hallo {from_helper.first_name},\n\n"
-        f"{by_helper.first_name} {by_helper.last_name} hat deine Tausch-Anfrage angenommen.\n\n"
-        f"Die Schicht ({shift.area.name}, {shift.day.label} {shift.time_range}) "
-        f"ist jetzt {by_helper.first_name} zugewiesen und du bist raus.\n\n"
-        f"Liebe Grüße\nDas Helfer-Team"
-    )
-    _send_single(from_helper.email, from_helper.first_name, subject, body)
+    return {
+        "to_email": from_helper.email,
+        "to_name": from_helper.first_name,
+        "subject": f"Deine Board-Schicht wurde übernommen – {settings.FESTIVAL_NAME}",
+        "body": (
+            f"Hallo {from_helper.first_name},\n\n"
+            f"{by_helper.first_name} {by_helper.last_name} hat dir die Schicht abgenommen, "
+            f"die du aufs Board gestellt hattest:\n\n"
+            f"  {shift.area.name} · {shift.day.label} · {shift.time_range}\n\n"
+            f"Du musst jetzt nichts weiter tun.\n\n"
+            f"Liebe Grüße\nDas Helfer-Team"
+        ),
+    }
 
 
 def send_swap_taken_email(from_helper, by_helper, assignment) -> None:
-    shift = assignment.shift
-    subject = f"Deine Board-Schicht wurde übernommen – {settings.FESTIVAL_NAME}"
-    body = (
-        f"Hallo {from_helper.first_name},\n\n"
-        f"{by_helper.first_name} {by_helper.last_name} hat dir die Schicht abgenommen, "
-        f"die du aufs Board gestellt hattest:\n\n"
-        f"  {shift.area.name} · {shift.day.label} · {shift.time_range}\n\n"
-        f"Du musst jetzt nichts weiter tun.\n\n"
-        f"Liebe Grüße\nDas Helfer-Team"
-    )
-    _send_single(from_helper.email, from_helper.first_name, subject, body)
+    deliver(build_swap_taken_message(from_helper, by_helper, assignment))

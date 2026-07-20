@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, time as dtime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, joinedload
@@ -784,7 +784,8 @@ def board(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/board/{offer_id}/take")
-async def board_take(offer_id: int, request: Request, db: Session = Depends(get_db)):
+async def board_take(offer_id: int, request: Request, background_tasks: BackgroundTasks,
+                     db: Session = Depends(get_db)):
     redir, helper = require_helper_redirect(request, db)
     if redir:
         return redir
@@ -888,13 +889,12 @@ async def board_take(offer_id: int, request: Request, db: Session = Depends(get_
 
     # Mail an A
     if settings.smtp_enabled:
-        try:
-            from ..email_sender import send_swap_taken_email
-            old_helper = db.get(models.Helper, old_a_helper_id)
-            if old_helper:
-                send_swap_taken_email(old_helper, helper, a_assignment)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[board_take] SMTP-Fehler: {exc}")
+        # Text hier bauen (Session offen, Lazy-Loads gehen), Versand im Hintergrund.
+        from ..email_sender import build_swap_taken_message, deliver, send_in_background
+        old_helper = db.get(models.Helper, old_a_helper_id)
+        if old_helper:
+            msg = build_swap_taken_message(old_helper, helper, a_assignment)
+            send_in_background(background_tasks, deliver, msg, label="board_take")
 
     return RedirectResponse("/me?taken=1", status_code=303)
 
@@ -928,7 +928,8 @@ def me_swap_form(assignment_id: int, request: Request, db: Session = Depends(get
 
 
 @router.post("/me/assignments/{assignment_id}/swap", response_class=HTMLResponse)
-async def me_swap_submit(assignment_id: int, request: Request, db: Session = Depends(get_db)):
+async def me_swap_submit(assignment_id: int, request: Request, background_tasks: BackgroundTasks,
+                         db: Session = Depends(get_db)):
     redir, helper = require_helper_redirect(request, db)
     if redir:
         return redir
@@ -991,17 +992,16 @@ async def me_swap_submit(assignment_id: int, request: Request, db: Session = Dep
     db.commit()
 
     if settings.smtp_enabled:
-        try:
-            from ..email_sender import send_swap_request_email
-            send_swap_request_email(target, helper, assignment, message)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[swap_request] SMTP-Fehler: {exc}")
+        from ..email_sender import build_swap_request_message, deliver, send_in_background
+        msg = build_swap_request_message(target, helper, assignment, message)
+        send_in_background(background_tasks, deliver, msg, label="swap_request")
 
     return RedirectResponse("/me?swap_sent=1", status_code=303)
 
 
 @router.post("/me/swap-requests/{request_id}/accept")
-def me_swap_accept(request_id: int, request: Request, db: Session = Depends(get_db)):
+def me_swap_accept(request_id: int, request: Request, background_tasks: BackgroundTasks,
+                   db: Session = Depends(get_db)):
     redir, helper = require_helper_redirect(request, db)
     if redir:
         return redir
@@ -1058,13 +1058,11 @@ def me_swap_accept(request_id: int, request: Request, db: Session = Depends(get_
     db.commit()
 
     if settings.smtp_enabled:
-        try:
-            from ..email_sender import send_swap_accepted_email
-            requester = db.get(models.Helper, old_helper_id)
-            if requester:
-                send_swap_accepted_email(requester, helper, assignment)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[swap_accept] SMTP-Fehler: {exc}")
+        from ..email_sender import build_swap_accepted_message, deliver, send_in_background
+        requester = db.get(models.Helper, old_helper_id)
+        if requester:
+            msg = build_swap_accepted_message(requester, helper, assignment)
+            send_in_background(background_tasks, deliver, msg, label="swap_accept")
 
     return RedirectResponse("/me?swap_accepted=1", status_code=303)
 

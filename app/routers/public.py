@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, EmailStr, ValidationError, field_validator, model_validator
@@ -207,7 +207,8 @@ def register_form(request: Request, db: Session = Depends(get_db)):
 # Formular absenden
 # ---------------------------------------------------------------------------
 @router.post("/register", response_class=HTMLResponse)
-async def register_submit(request: Request, db: Session = Depends(get_db)):
+async def register_submit(request: Request, background_tasks: BackgroundTasks,
+                          db: Session = Depends(get_db)):
     if not settings.REGISTRATION_OPEN:
         return templates.TemplateResponse(
             "registration_closed.html",
@@ -325,11 +326,10 @@ async def register_submit(request: Request, db: Session = Depends(get_db)):
     base = str(request.base_url).rstrip("/")
     verify_url = f"{base}/verify/{helper.email_verification_token}"
     if settings.smtp_enabled:
-        try:
-            from ..email_sender import send_verification_email
-            send_verification_email(helper, verify_url)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[register] Verifikations-Mail fehlgeschlagen: {exc}")
+        # Text jetzt bauen (Session offen), Versand danach im Hintergrund.
+        from ..email_sender import build_verification_message, deliver, send_in_background
+        msg = build_verification_message(helper, verify_url)
+        send_in_background(background_tasks, deliver, msg, label="register")
     else:
         print(f"[register] Verifikations-Link für {helper.email}: {verify_url}")
 
@@ -403,7 +403,8 @@ def verify_email(token: str, request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/me/resend-verify")
-def resend_verify(request: Request, db: Session = Depends(get_db)):
+def resend_verify(request: Request, background_tasks: BackgroundTasks,
+                  db: Session = Depends(get_db)):
     """Bekannter Helfer fordert eine neue Verifikations-Mail an."""
     from ..auth import get_current_helper
     helper = get_current_helper(request, db)
@@ -417,11 +418,10 @@ def resend_verify(request: Request, db: Session = Depends(get_db)):
     base = str(request.base_url).rstrip("/")
     verify_url = f"{base}/verify/{helper.email_verification_token}"
     if settings.smtp_enabled:
-        try:
-            from ..email_sender import send_verification_email
-            send_verification_email(helper, verify_url)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[resend_verify] SMTP-Fehler: {exc}")
+        # Text jetzt bauen (Session offen), Versand danach im Hintergrund.
+        from ..email_sender import build_verification_message, deliver, send_in_background
+        msg = build_verification_message(helper, verify_url)
+        send_in_background(background_tasks, deliver, msg, label="resend_verify")
     else:
         print(f"[resend_verify] Verifikations-Link für {helper.email}: {verify_url}")
     return RedirectResponse("/me?verify_resent=1", status_code=303)
@@ -581,7 +581,8 @@ def forgot_form(request: Request):
 
 
 @router.post("/forgot", response_class=HTMLResponse)
-async def forgot_submit(request: Request, db: Session = Depends(get_db)):
+async def forgot_submit(request: Request, background_tasks: BackgroundTasks,
+                        db: Session = Depends(get_db)):
     form = await request.form()
     email = (form.get("email") or "").strip().lower()
 
@@ -603,12 +604,11 @@ async def forgot_submit(request: Request, db: Session = Depends(get_db)):
         # Info-Seite (für Self-Hosted ohne SMTP) – nicht dem Nutzer, um
         # Email-Enumeration zu vermeiden.
         if settings.smtp_enabled:
-            try:
-                from ..email_sender import send_password_reset_email
-                send_password_reset_email(helper, reset_url)
-            except Exception as exc:  # noqa: BLE001
-                # SMTP down → lieber auffällig loggen, als den Nutzer scheitern zu lassen
-                print(f"[forgot] SMTP-Fehler: {exc}")
+            # Versand im Hintergrund: die Seite kommt sofort, die Mail folgt.
+            from ..email_sender import (build_password_reset_message, deliver,
+                                        send_in_background)
+            msg = build_password_reset_message(helper, reset_url)
+            send_in_background(background_tasks, deliver, msg, label="forgot")
         else:
             # Kein SMTP konfiguriert: wir printen den Link in die Server-Konsole,
             # damit der Admin ihn notfalls weiterleiten kann.

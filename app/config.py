@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     SMTP_FROM_ADDRESS: str = "helfer@example.org"
     SMTP_FROM_NAME: str = "Chimaera Helfer-Team"
     SMTP_USE_TLS: bool = True
+    # Sekunden bis SMTP aufgibt. Der Versand laeuft im Hintergrund, blockiert
+    # also keine Seite mehr - ein haengender Server soll den Worker trotzdem
+    # nicht ewig belegen.
+    SMTP_TIMEOUT: int = 20
 
     # Nur für Dev: Passwort-Reset-Links auf der Seite anzeigen, wenn SMTP aus ist.
     # In Produktion immer False lassen.
