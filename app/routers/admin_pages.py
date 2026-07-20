@@ -34,7 +34,7 @@ templates = Jinja2Templates(directory="app/templates")
 # ---------------------------------------------------------------------------
 SEGMENT_LABELS = {
     "no_shifts": "ohne Schichten",
-    "below_soll": "unter Soll (inkl. ohne Schichten)",
+    "below_soll": "unter Soll",
 }
 
 
@@ -78,9 +78,9 @@ def apply_segment_filters(query, tag: str | None, segments: list[str] | None,
                           views_lt: int | None = None, me_before: str | None = None):
     """Filtert nach Markierung (UND) und berechneten Gruppen (ODER untereinander).
 
-    Mehrere Segmente werden mit ODER verknuepft, weil sie sich ueberschneiden
-    (jede Person ohne Schichten ist auch unter Soll). Die Markierung wird
-    zusaetzlich mit UND angewendet.
+    Die Gruppen sind ueberschneidungsfrei: "ohne Schichten" = 0 Schichten,
+    "unter Soll" = mindestens 1, aber weniger als das Soll. Mehrere Gruppen
+    werden mit ODER verknuepft, die Markierung zusaetzlich mit UND.
     """
     if tag:
         query = query.filter(
@@ -95,7 +95,9 @@ def apply_segment_filters(query, tag: str | None, segments: list[str] | None,
         if "no_shifts" in segments:
             conds.append(cnt == 0)
         if "below_soll" in segments:
-            conds.append(cnt < _soll_expr())
+            # Bewusst OHNE die Nuller: die haben ihre eigene Gruppe. Wer beides
+            # will, hakt beide an - die Gruppen sind ODER-verknuepft.
+            conds.append((cnt > 0) & (cnt < _soll_expr()))
         query = query.filter(or_(*conds))
 
     # Wie oft wurde /me geoeffnet? NULL zaehlt als 0 (Spalte kam spaeter dazu).

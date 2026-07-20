@@ -110,10 +110,9 @@
            class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
   </div>
   <div class="md:col-span-2">
-    <label class="block text-xs text-slate-500 mb-1">Nicht mehr in /me seit (deutsche Zeit)</label>
+    <label class="block text-xs text-slate-500 mb-1">Nicht mehr in /me seit</label>
     <input type="datetime-local" name="me_before" value="{{ me_before }}"
            class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
-    <p class="text-[11px] text-slate-400 mt-0.5">„nie geöffnet“ ist immer mit dabei.</p>
   </div>
   <div class="md:col-span-7 flex justify-end">
     <button class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">Filtern</button>
@@ -129,8 +128,8 @@
 
 <form method="post" action="/admin/helpers/tag" id="tagform">
 <input type="hidden" name="back" value="/admin/helpers{% if request.url.query %}?{{ request.url.query }}{% endif %}">
-<div class="bg-white border border-slate-200 rounded-lg p-3 mb-3 flex flex-wrap items-center gap-2">
-  <span class="text-sm text-slate-600">Sammelaktion für <strong id="selcount">0</strong> ausgewählte:</span>
+<div id="tagbar" class="bg-white border border-slate-200 rounded-lg p-3 mb-3 flex flex-wrap items-center gap-2 hidden">
+  <span class="text-sm text-slate-600">Tag (Markierung) vergeben:</span>
   <input type="text" name="tag" list="taglist" placeholder="Markierung, z.B. zugewiesen"
          class="px-2 py-1.5 border border-slate-300 rounded text-sm">
   <datalist id="taglist">
@@ -141,10 +140,6 @@
           class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">vergeben</button>
   <button name="action" value="remove"
           class="px-3 py-1.5 bg-white border border-red-300 hover:bg-red-50 text-red-700 rounded text-sm">entfernen</button>
-  <button type="button" onclick="selectAllRows(true)"
-          class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded text-sm">alle {{ helpers|length }} auswählen</button>
-  <button type="button" onclick="selectAllRows(false)"
-          class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded text-sm">Auswahl leeren</button>
 </div>
 
 <!-- Tabelle -->
@@ -237,8 +232,9 @@
     updateCount();
   }
   function updateCount() {
+    // Die Markierungs-Leiste erscheint erst, wenn wirklich jemand ausgewählt ist.
     var n = document.querySelectorAll('.rowcheck:checked').length;
-    document.getElementById('selcount').textContent = n;
+    document.getElementById('tagbar').classList.toggle('hidden', n === 0);
   }
   updateCount();
 </script>
