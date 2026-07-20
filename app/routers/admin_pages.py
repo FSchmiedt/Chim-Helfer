@@ -941,7 +941,16 @@ def shift_detail(shift_id: int, request: Request, db: Session = Depends(get_db))
     shift = db.get(models.Shift, shift_id)
     if not shift:
         return HTMLResponse("Nicht gefunden", status_code=404)
+    return templates.TemplateResponse("admin/shift_detail.html",
+                                      _shift_detail_ctx(request, db, shift))
 
+
+def _shift_detail_ctx(request: Request, db: Session, shift, **extra) -> dict:
+    """Kontext der Schicht-Detailseite.
+
+    Ausgelagert, damit die Zuweisungs-Route dieselbe Seite mit einer
+    Warnung erneut rendern kann, ohne alles doppelt aufzubauen.
+    """
     # Kandidat:innen: Helfer:innen, die an diesem Tag verfügbar sind UND diesen Bereich als Wunsch haben
     candidates = (
         db.query(models.Helper)
@@ -978,17 +987,28 @@ def shift_detail(shift_id: int, request: Request, db: Session = Depends(get_db))
             "trust_names": [role_name_by_id[rid] for rid in trusted_role_ids],
         }
 
-    return templates.TemplateResponse(
-        "admin/shift_detail.html",
-        _ctx(
-            request,
-            shift=shift,
-            candidates=candidates,
-            assigned_ids=assigned_ids,
-            roles=roles,
-            role_info_by_helper=role_info_by_helper,
-            prefs_rank_for_area=prefs_rank_for_area,
-        ),
+    # Aktueller Stand je Kandidat:in - damit man VOR dem Klick sieht,
+    # wer schon wie viele Schichten hat.
+    from ..assignment_rules import soll_for
+    stand_by_helper = {
+        c.id: {"hat": len(c.shift_assignments), "soll": soll_for(c)}
+        for c in candidates
+    }
+
+    return _ctx(
+        request,
+        shift=shift,
+        candidates=candidates,
+        assigned_ids=assigned_ids,
+        roles=roles,
+        role_info_by_helper=role_info_by_helper,
+        prefs_rank_for_area=prefs_rank_for_area,
+        stand_by_helper=stand_by_helper,
+        warn_violations=None,
+        warn_helper=None,
+        warn_sentence=None,
+        warn_role_id=None,
+        **extra,
     )
 
 
@@ -1011,12 +1031,36 @@ async def shift_assign(shift_id: int, request: Request, db: Session = Depends(ge
     helper_id = int(form.get("helper_id"))
     role_id_str = form.get("role_id")
     role_id = int(role_id_str) if role_id_str else None
+    force = form.get("force") == "1"
 
     existing = db.query(models.ShiftAssignment).filter_by(shift_id=shift_id, helper_id=helper_id).one_or_none()
     if existing:
+        # Reine Rollenänderung an einer bestehenden Zuweisung – nichts zu prüfen.
         existing.role_id = role_id
-    else:
-        db.add(models.ShiftAssignment(shift_id=shift_id, helper_id=helper_id, role_id=role_id))
+        db.commit()
+        return RedirectResponse(f"/admin/shifts/{shift_id}", status_code=303)
+
+    # Regeln prüfen. Admins duerfen uebersteuern, muessen es aber explizit tun.
+    if not force:
+        from ..assignment_rules import check_assignment, override_sentence
+        shift = db.get(models.Shift, shift_id)
+        helper = db.get(models.Helper, helper_id)
+        if not shift or not helper:
+            return RedirectResponse(f"/admin/shifts/{shift_id}", status_code=303)
+        violations = check_assignment(helper, shift, list(helper.shift_assignments))
+        if violations:
+            return templates.TemplateResponse(
+                "admin/shift_detail.html",
+                _shift_detail_ctx(
+                    request, db, shift,
+                    warn_violations=violations,
+                    warn_helper=helper,
+                    warn_sentence=override_sentence(helper, violations),
+                    warn_role_id=role_id,
+                ),
+            )
+
+    db.add(models.ShiftAssignment(shift_id=shift_id, helper_id=helper_id, role_id=role_id))
     db.commit()
     return RedirectResponse(f"/admin/shifts/{shift_id}", status_code=303)
 
@@ -1080,6 +1124,12 @@ def admin_swap_page(request: Request, db: Session = Depends(get_db)):
         "conflict": ("error", "Tausch nicht möglich: es entstünde ein zeitlicher Konflikt."),
     }
     flash_data = flash_map.get(flash)
+    # Bei Regelverstoessen haengen die konkreten Gruende als ?detail=... dran.
+    detail = request.query_params.get("detail")
+    if flash == "conflict" and detail:
+        flash_data = ("error", f"Tausch nicht möglich — {detail}")
+    warn_a = request.query_params.get("a")
+    warn_b = request.query_params.get("b")
 
     return templates.TemplateResponse(
         "admin/swap.html",
@@ -1088,6 +1138,8 @@ def admin_swap_page(request: Request, db: Session = Depends(get_db)):
             helper_data=helper_data,
             helper_data_json=_json.dumps(helper_data),
             flash=flash_data,
+            warn_a=warn_a,
+            warn_b=warn_b,
         ),
     )
 
@@ -1151,9 +1203,29 @@ async def admin_swap_do(request: Request, db: Session = Depends(get_db)):
                 return True
         return False
 
-    # A bekommt b.shift, B bekommt a.shift
-    if _has_conflict(helper_a_id, b.shift, a.id) or _has_conflict(helper_b_id, a.shift, b.id):
-        return RedirectResponse("/admin/swap?flash=conflict", status_code=303)
+    # A bekommt b.shift, B bekommt a.shift.
+    # Zentrale Regelpruefung (Ueberschneidung + Ruhezeit). Die Anzahl bleibt
+    # beim Tausch gleich, deshalb ist over_soll hier irrelevant und wird
+    # herausgefiltert. Admins koennen mit force=1 uebersteuern.
+    force = form.get("force") == "1"
+    if not force:
+        from ..assignment_rules import check_assignment
+        problems = []
+        for hid, new_shift, own_id in ((helper_a_id, b.shift, a.id),
+                                       (helper_b_id, a.shift, b.id)):
+            h = db.get(models.Helper, hid)
+            others = [x for x in h.shift_assignments if x.id != own_id]
+            for v in check_assignment(h, new_shift, others):
+                if v["code"] == "over_soll":
+                    continue
+                problems.append(f"{h.first_name} {h.last_name}: {v['headline']}")
+        if problems:
+            from urllib.parse import quote
+            return RedirectResponse(
+                f"/admin/swap?flash=conflict&detail={quote(' | '.join(problems))}"
+                f"&a={assign_a_id}&b={assign_b_id}",
+                status_code=303,
+            )
 
     a.helper_id, b.helper_id = helper_b_id, helper_a_id
 

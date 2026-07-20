@@ -2,6 +2,46 @@
 
 {% block content %}
 
+{% if warn_violations %}
+<div class="mb-6 rounded-lg border-4 border-red-500 bg-red-50 p-5">
+  <p class="text-2xl font-extrabold text-red-700 uppercase tracking-wide mb-1">
+    Stopp — das geht so nicht auf
+  </p>
+  <p class="text-red-900 mb-4">
+    {{ warn_helper.first_name }} {{ warn_helper.last_name }} soll
+    <strong>{{ shift.area.name }} · {{ shift.day.label }} ·
+    {{ shift.start_time.strftime('%H:%M') }}-{{ shift.end_time.strftime('%H:%M') }}</strong>
+    bekommen. Dabei gibt es {{ warn_violations|length }} Problem(e):
+  </p>
+
+  {% for v in warn_violations %}
+  <div class="mb-3 bg-white border-2 border-red-300 rounded p-3">
+    <p class="font-bold text-red-700 text-lg">{{ v.headline }}</p>
+    <p class="text-sm text-slate-700 mt-1">{{ v.detail }}</p>
+  </div>
+  {% endfor %}
+
+  <div class="flex flex-col sm:flex-row gap-3 mt-5">
+    <a href="/admin/shifts/{{ shift.id }}"
+       class="px-5 py-3 rounded-lg bg-slate-800 hover:bg-slate-900 text-white font-semibold text-center">
+      Stimmt — wir müssen eine andere Lösung finden
+    </a>
+    <form method="post" action="/admin/shifts/{{ shift.id }}/assign">
+      <input type="hidden" name="helper_id" value="{{ warn_helper.id }}">
+      {% if warn_role_id %}<input type="hidden" name="role_id" value="{{ warn_role_id }}">{% endif %}
+      <input type="hidden" name="force" value="1">
+      <button class="w-full px-5 py-3 rounded-lg bg-white border-2 border-red-500 hover:bg-red-100 text-red-700 font-semibold">
+        {{ warn_sentence }}
+      </button>
+    </form>
+  </div>
+  <p class="text-xs text-red-800 mt-3">
+    Der rechte Button trägt die Schicht trotzdem ein. Nur nutzen, wenn das
+    bewusst so gewollt ist.
+  </p>
+</div>
+{% endif %}
+
 <div class="mb-4">
   <a href="/admin/shifts" class="text-sm text-slate-500 hover:text-slate-800">← zurück zum Schichtplan</a>
 </div>
@@ -63,6 +103,11 @@
             <div class="flex items-center gap-2">
               <a href="/admin/helpers/{{ c.id }}" class="font-medium text-sm hover:text-indigo-600">{{ c.full_name }}</a>
               <span class="text-xs px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded">{{ prefs_rank_for_area(c, shift.area_id) }}. Wahl</span>
+              {% set st = stand_by_helper.get(c.id) %}
+              {% if st %}
+                <span title="bereits zugewiesene Schichten / Soll"
+                      class="text-xs px-1.5 py-0.5 rounded {% if st.hat >= st.soll %}bg-red-100 text-red-700{% else %}bg-slate-100 text-slate-600{% endif %}">{{ st.hat }}/{{ st.soll }}</span>
+              {% endif %}
             </div>
             <div class="text-xs text-slate-500 mt-0.5">
               {% if trust_names %}

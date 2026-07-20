@@ -49,6 +49,9 @@ class Settings(BaseSettings):
 
     # Anforderungen (nur Anzeige)
     MIN_SHIFTS: int = 2
+    # Mindestpause zwischen zwei Schichten derselben Person (Stunden).
+    # Wird beim Zuweisen im Admin geprueft - dort als Warnung, nicht als Sperre.
+    MIN_REST_HOURS: int = 10
     MIN_DAYS: int = 2
     BENEFITS_MIN_SHIFTS: int = 3
     BENEFITS_MIN_DAYS: int = 3
