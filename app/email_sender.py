@@ -439,13 +439,15 @@ def send_shift_change_notice_to_helper(helper, shift, action: str, role=None) ->
 # 75€-Ein-Schicht-Angebot (manuell vom Admin ausgeloest)
 # ---------------------------------------------------------------------------
 def build_discount_offer_message(helper) -> dict:
-    """Angebot an eine:n Helfer:in, statt der vollen Schichten nur eine
+    """Info an eine:n Helfer:in, dass sie/er nur fuer eine einzelne Schicht
 
-    einzelne Schicht fuer 75€ (statt 160€) zu machen. Absender ist bewusst
-    bar@/helfen@ (nicht das generische Helfer-Team-Postfach), damit Antworten
-    direkt bei der richtigen Stelle landen. Bereich wird ueber die aktuellen
-    Zuweisungen der Person bestimmt (erste gefundene Bar-Zuweisung zaehlt);
-    ohne Zuweisung geht's an helfen@.
+    (75€ effektiv, nach Teil-Rueckerstattung vom vollen 160€-Pfand) eingetragen
+    wurde. Kein Angebot, sondern eine bereits erfolgte Entscheidung - die
+    Person soll sich nur melden, falls sie NICHT einverstanden ist. Absender
+    ist bewusst bar@/helfen@ (nicht das generische Helfer-Team-Postfach),
+    damit Antworten direkt bei der richtigen Stelle landen. Bereich wird ueber
+    die aktuellen Zuweisungen der Person bestimmt (erste gefundene
+    Bar-Zuweisung zaehlt); ohne Zuweisung geht's an helfen@.
     """
     is_bar = any(
         a.shift.area.name.strip().lower() in settings.swap_excluded_areas
@@ -454,13 +456,15 @@ def build_discount_offer_message(helper) -> dict:
     org_email = settings.BAR_EMAIL if is_bar else settings.HELFEN_EMAIL
     org_name = settings.BAR_NAME if is_bar else settings.HELFEN_NAME
 
-    subject = f"Angebot: nur eine Schicht für 75€ – {settings.FESTIVAL_NAME}"
+    subject = f"Info: nur eine Schicht für dich eingetragen (75€) – {settings.FESTIVAL_NAME}"
     body = (
         f"Hallo {helper.first_name},\n\n"
-        f"wir koennten dir anbieten, statt der vollen Schichten nur eine "
-        f"einzelne Schicht zu uebernehmen - dafuer 75€ Pfand statt 160€.\n\n"
-        f"Wenn du damit einverstanden bist, schreib uns einfach kurz eine "
-        f"Mail an {org_email}, dann klaeren wir das Weitere.\n\n"
+        f"wir haben dich für nur eine einzelne Schicht eingetragen. Am Pfand "
+        f"ändert das nichts - das wären erstmal 160€ Pfand, du bekommst am "
+        f"Ende aber 85€ davon zurück, sodass du effektiv nur 75€ für den "
+        f"Festivalbesuch mit nur einer Schicht Verantwortung gezahlt hast.\n"
+        f"Falls du damit nicht einverstanden bist, schreib uns gerne kurz "
+        f"eine Mail an {org_email}.\n\n"
         f"Liebe Grüße\n{org_name}"
     )
     return {
