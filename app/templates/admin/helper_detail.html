@@ -90,8 +90,7 @@
       <span>
         <span class="font-medium">75€-Ein-Schicht-Angebot machen</span>
         <span class="block text-xs text-slate-500">
-          Schickt {{ helper.first_name }} automatisch eine Mail: nur eine Schicht für 75€ statt der vollen 160€.
-          Absender ist bar@ oder helfen@chimaera-festival.de, je nachdem in welchem Bereich die Person aktuell eingeteilt ist.
+          Schickt {{ helper.first_name }} automatisch eine Mail: nur eine Schicht für 75€ statt der vollen 160€.          
           {% if helper.discount_offered and helper.discount_offered_at %}
             <span class="block mt-0.5">Angebot verschickt am {{ helper.discount_offered_at.strftime('%d.%m.%Y um %H:%M') }}.</span>
           {% endif %}
