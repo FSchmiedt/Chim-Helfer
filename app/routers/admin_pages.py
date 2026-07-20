@@ -439,12 +439,12 @@ def helpers_list(
     views_lt: str | None = Query(None),
     me_before: str | None = Query(None),
     q: str | None = Query(None),
-    sort: str | None = Query(None),  # "changed" (default) | "created" | "name"
+    sort: str | None = Query(None),  # "changed" (default) | "created" | "name" | "email"
 ):
     if (r := require_admin_redirect(request)):
         return r
 
-    sort = sort if sort in ("changed", "created", "name") else "changed" 
+    sort = sort if sort in ("changed", "created", "name", "email") else "changed" 
 
     day_id_int = _parse_int_or_none(day_id)
     area_id_int = _parse_int_or_none(area_id)
@@ -496,6 +496,8 @@ def helpers_list(
 
     if sort == "name":
         helpers.sort(key=lambda h: (h.last_name.lower(), h.first_name.lower()))
+    elif sort == "email":
+        helpers.sort(key=lambda h: h.email.lower())
     elif sort == "changed":
         # Zuletzt geaendert zuerst; wer seit Tracking-Start keine Aenderung
         # hatte, landet hinten (dort bleibt die Anmelde-Reihenfolge erhalten,
