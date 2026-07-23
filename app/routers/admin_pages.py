@@ -743,6 +743,7 @@ async def _handle_helper_update(helper_id: int, request: Request, db: Session,
     if "pfand" in sections:
         new_paid = form.get("pfand_paid") == "on"
         new_returned = form.get("pfand_returned") == "on"
+        new_exempt = form.get("pfand_exempt") == "on"
         now = ddatetime.utcnow()
         # Erst Kante prüfen, dann setzen, damit Timestamps nur beim echten
         # Wechsel aktualisiert werden.
@@ -753,6 +754,7 @@ async def _handle_helper_update(helper_id: int, request: Request, db: Session,
             # Wenn nicht mehr bezahlt, auch nicht zurückgegeben.
             new_returned = False
         helper.pfand_paid = new_paid
+        helper.pfand_exempt = new_exempt
 
         if new_returned and not helper.pfand_returned:
             helper.pfand_returned_at = now
@@ -772,6 +774,11 @@ async def _handle_helper_update(helper_id: int, request: Request, db: Session,
             helper.discount_offered_at = None
         helper.discount_offered = new_discount
 
+        # "muss nur eine Schicht machen" (z.B. Driver, hat schon ein Ticket).
+        # Rein organisatorisch, loest keine Mail aus - anders als discount_offered
+        # oben, das immer mit der 75€-Info-Mail zusammenhaengt.
+        helper.wants_only_one_shift = form.get("wants_only_one_shift") == "on"
+
     db.commit()
     if discount_msg is not None:
         from ..email_sender import deliver, send_in_background
@@ -780,10 +787,11 @@ async def _handle_helper_update(helper_id: int, request: Request, db: Session,
 
 
 @router.post("/helpers/{helper_id}/save")
-async def helper_save(helper_id: int, request: Request, db: Session = Depends(get_db)):
+async def helper_save(helper_id: int, request: Request, background_tasks: BackgroundTasks,
+                       db: Session = Depends(get_db)):
     if (r := require_admin_redirect(request)):
         return r
-    return await _handle_helper_update(helper_id, request, db)
+    return await _handle_helper_update(helper_id, request, db, background_tasks)
 
 
 @router.post("/helpers/{helper_id}/delete")
@@ -980,8 +988,100 @@ def shifts_list(
     return templates.TemplateResponse(
         "admin/shifts.html",
         _ctx(request, grouped_areas=grouped_areas, days=days, areas=areas,
-             area_id=area_id_int, day_id=day_id_int),
+             area_id=area_id_int, day_id=day_id_int,
+             admin_flash=request.query_params.get("msg")),
     )
+
+
+@router.post("/shifts/bulk-edit")
+async def shifts_bulk_edit(request: Request, db: Session = Depends(get_db)):
+    """Speichert Zeiten/Label/Kapazitaet fuer mehrere Schichten auf einmal.
+
+    Kommt vom Bearbeiten-Modus in der Schichtplan-Uebersicht: ein Bereich
+    wird komplett als ein Formular abgeschickt (Felder heissen
+    start_time_<id>, end_time_<id>, label_<id>, capacity_<id>), statt dass
+    man jede Schicht einzeln oeffnen muss.
+    """
+    if (r := require_admin_redirect(request)):
+        return r
+    form = await request.form()
+    from datetime import time as dtime
+    from urllib.parse import quote
+
+    shift_ids = set()
+    for key in form.keys():
+        if key.startswith("start_time_"):
+            try:
+                shift_ids.add(int(key[len("start_time_"):]))
+            except ValueError:
+                continue
+
+    shifts = (
+        db.query(models.Shift)
+        .options(joinedload(models.Shift.area), joinedload(models.Shift.day),
+                 joinedload(models.Shift.assignments))
+        .filter(models.Shift.id.in_(shift_ids))
+        .all()
+        if shift_ids else []
+    )
+
+    changed = 0
+    warnings = []
+    for s in shifts:
+        filled = len(s.assignments)
+        raw_start = form.get(f"start_time_{s.id}")
+        raw_end = form.get(f"end_time_{s.id}")
+        raw_label = (form.get(f"label_{s.id}") or "").strip()
+        raw_capacity = form.get(f"capacity_{s.id}")
+
+        try:
+            new_capacity = int(raw_capacity)
+        except (TypeError, ValueError):
+            new_capacity = s.capacity
+        if new_capacity < filled:
+            warnings.append(
+                f"{s.area.name} {s.day.label} {s.time_range}: Kapazität kann nicht unter "
+                f"{filled} (aktuell belegt) gesetzt werden – auf {filled} begrenzt."
+            )
+            new_capacity = filled
+
+        touched = False
+        try:
+            if raw_start and dtime.fromisoformat(raw_start) != s.start_time:
+                s.start_time = dtime.fromisoformat(raw_start)
+                touched = True
+            if raw_end and dtime.fromisoformat(raw_end) != s.end_time:
+                s.end_time = dtime.fromisoformat(raw_end)
+                touched = True
+        except ValueError:
+            warnings.append(f"{s.area.name} {s.day.label}: ungültige Uhrzeit ignoriert.")
+
+        new_label = raw_label or None
+        if new_label != s.label:
+            s.label = new_label
+            touched = True
+        if new_capacity != s.capacity:
+            s.capacity = new_capacity
+            touched = True
+
+        if touched:
+            changed += 1
+
+    db.commit()
+
+    msg = f"success: {changed} Schicht(en) aktualisiert." if changed else "info: Keine Änderungen."
+    if warnings:
+        msg = "error: " + " | ".join(warnings) + (f" ({changed} Schicht(en) insgesamt gespeichert.)" if changed else "")
+
+    area_id = form.get("area_id") or ""
+    day_id = form.get("day_id") or ""
+    params = []
+    if area_id:
+        params.append(f"area_id={area_id}")
+    if day_id:
+        params.append(f"day_id={day_id}")
+    params.append(f"msg={quote(msg)}")
+    return RedirectResponse(f"/admin/shifts?{'&'.join(params)}", status_code=303)
 
 
 @router.post("/shifts/new")
@@ -1484,6 +1584,8 @@ def mail_page(
     db: Session = Depends(get_db),
     day_id: str | None = Query(None),
     area_id: str | None = Query(None),
+    assigned_day_id: str | None = Query(None),
+    assigned_area_id: str | None = Query(None),
     status_filter: str | None = Query(None, alias="status"),
     tag: str | None = Query(None),
     segment: list[str] | None = Query(None),
@@ -1495,6 +1597,8 @@ def mail_page(
 
     day_id_int = _parse_int_or_none(day_id)
     area_id_int = _parse_int_or_none(area_id)
+    assigned_day_id_int = _parse_int_or_none(assigned_day_id)
+    assigned_area_id_int = _parse_int_or_none(assigned_area_id)
 
     query = db.query(models.Helper)
     if day_id_int:
@@ -1507,6 +1611,16 @@ def mail_page(
             models.HelperAreaPreference.area_id == area_id_int,
             models.HelperAreaPreference.rank < 5,
         )
+    if assigned_day_id_int or assigned_area_id_int:
+        # Anders als oben: hier zaehlt nur eine echte Schicht-Zuweisung,
+        # nicht nur Verfuegbarkeit/Wunsch. Fuer z.B. die Bar-AG, die nur an
+        # Leute schreiben will, die wirklich eine Bar-Schicht haben.
+        query = query.join(models.ShiftAssignment, models.ShiftAssignment.helper_id == models.Helper.id)
+        query = query.join(models.Shift, models.Shift.id == models.ShiftAssignment.shift_id)
+        if assigned_day_id_int:
+            query = query.filter(models.Shift.day_id == assigned_day_id_int)
+        if assigned_area_id_int:
+            query = query.filter(models.Shift.area_id == assigned_area_id_int)
     if status_filter:
         query = query.filter(models.Helper.status == status_filter)
     query = apply_segment_filters(query, tag, segment,
@@ -1525,6 +1639,8 @@ def mail_page(
             areas=areas,
             day_id=day_id_int,
             area_id=area_id_int,
+            assigned_day_id=assigned_day_id_int,
+            assigned_area_id=assigned_area_id_int,
             status_filter=status_filter,
             tag=tag,
             segment=segment or [],
@@ -1592,6 +1708,8 @@ async def mail_send(request: Request, db: Session = Depends(get_db)):
             areas=areas,
             day_id=None,
             area_id=None,
+            assigned_day_id=None,
+            assigned_area_id=None,
             status_filter=None,
             tag=None,
             segment=[],

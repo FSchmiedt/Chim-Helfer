@@ -2,6 +2,17 @@
 
 {% block content %}
 
+{% if admin_flash is defined and admin_flash %}
+{% set kind = admin_flash.split(':', 1)[0] if ':' in admin_flash else 'info' %}
+{% set body = admin_flash.split(':', 1)[1].strip() if ':' in admin_flash else admin_flash %}
+<div class="mb-4 p-3 rounded-md text-sm
+            {% if kind == 'success' %}bg-emerald-50 border border-emerald-300 text-emerald-900
+            {% elif kind == 'error' %}bg-red-50 border border-red-300 text-red-900
+            {% else %}bg-sky-50 border border-sky-300 text-sky-900{% endif %}">
+  {{ body }}
+</div>
+{% endif %}
+
 <div class="flex items-center justify-between mb-6">
   <div>
     <h1 class="text-2xl font-semibold">Schichtplan</h1>
@@ -59,31 +70,74 @@
       </span>
     </summary>
     <div class="px-4 pb-4 pt-1 border-t border-slate-100">
-      {% for day_block in block.days %}
-      <div class="mb-4 last:mb-0">
-        <h3 class="text-xs uppercase tracking-wide text-slate-500 font-medium mb-2 mt-3">{{ day_block.day_label }}</h3>
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {% for s in day_block.shifts %}
-          <a href="/admin/shifts/{{ s.id }}" class="block bg-slate-50 border border-slate-200 rounded-lg p-3 hover:border-indigo-400 hover:shadow-sm transition">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <div class="font-semibold">{{ s.time_range }}</div>
-                {% if s.label %}<div class="text-sm text-slate-600 mt-0.5">{{ s.label }}</div>{% endif %}
-              </div>
-              {% set filled = s.assignments|length %}
-              {% set ratio_class = 'bg-green-100 text-green-800' if filled >= s.capacity else ('bg-amber-100 text-amber-800' if filled > 0 else 'bg-red-100 text-red-800') %}
-              <span class="px-2 py-0.5 rounded text-xs font-medium flex-shrink-0 {{ ratio_class }}">{{ filled }} / {{ s.capacity }}</span>
-            </div>
-            {% if s.assignments %}
-            <div class="mt-2 pt-2 border-t border-slate-200 text-xs text-slate-600">
-              {{ s.assignments | map(attribute='helper.first_name') | join(', ') }}
-            </div>
-            {% endif %}
-          </a>
-          {% endfor %}
+      <form method="post" action="/admin/shifts/bulk-edit" class="shift-bulk-form">
+        <input type="hidden" name="area_id" value="{{ area_id or '' }}" />
+        <input type="hidden" name="day_id" value="{{ day_id or '' }}" />
+        <div class="flex items-center justify-end gap-2 mb-2 mt-2">
+          <span class="edit-only text-xs text-slate-500 mr-auto">Zeiten, Label und Kapazität ändern – Zuweisungen bleiben wie sie sind.</span>
+          <button type="submit" class="edit-only px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">
+            Änderungen speichern
+          </button>
+          <button type="button"
+                  onclick="const f = this.closest('form'); f.classList.toggle('editing'); this.textContent = f.classList.contains('editing') ? 'Fertig' : '✏️ Bearbeiten';"
+                  class="px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 rounded text-sm">
+            ✏️ Bearbeiten
+          </button>
         </div>
-      </div>
-      {% endfor %}
+        {% for day_block in block.days %}
+        <div class="mb-4 last:mb-0">
+          <h3 class="text-xs uppercase tracking-wide text-slate-500 font-medium mb-2 mt-3">{{ day_block.day_label }}</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {% for s in day_block.shifts %}
+            <div class="bg-slate-50 border border-slate-200 rounded-lg p-3">
+              <div class="view-only">
+                <a href="/admin/shifts/{{ s.id }}" class="block hover:opacity-80">
+                  <div class="flex items-start justify-between gap-2">
+                    <div>
+                      <div class="font-semibold">{{ s.time_range }}</div>
+                      {% if s.label %}<div class="text-sm text-slate-600 mt-0.5">{{ s.label }}</div>{% endif %}
+                    </div>
+                    {% set filled = s.assignments|length %}
+                    {% set ratio_class = 'bg-green-100 text-green-800' if filled >= s.capacity else ('bg-amber-100 text-amber-800' if filled > 0 else 'bg-red-100 text-red-800') %}
+                    <span class="px-2 py-0.5 rounded text-xs font-medium flex-shrink-0 {{ ratio_class }}">{{ filled }} / {{ s.capacity }}</span>
+                  </div>
+                  {% if s.assignments %}
+                  <div class="mt-2 pt-2 border-t border-slate-200 text-xs text-slate-600">
+                    {{ s.assignments | map(attribute='helper.first_name') | join(', ') }}
+                  </div>
+                  {% endif %}
+                </a>
+              </div>
+              <div class="edit-only space-y-1.5">
+                <div class="grid grid-cols-2 gap-1.5">
+                  <div>
+                    <label class="block text-[10px] text-slate-500">Start</label>
+                    <input type="time" name="start_time_{{ s.id }}" value="{{ s.start_time.strftime('%H:%M') }}"
+                           class="w-full px-1.5 py-1 border border-slate-300 rounded text-xs" />
+                  </div>
+                  <div>
+                    <label class="block text-[10px] text-slate-500">Ende</label>
+                    <input type="time" name="end_time_{{ s.id }}" value="{{ s.end_time.strftime('%H:%M') }}"
+                           class="w-full px-1.5 py-1 border border-slate-300 rounded text-xs" />
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-[10px] text-slate-500">Label</label>
+                  <input type="text" name="label_{{ s.id }}" value="{{ s.label or '' }}"
+                         class="w-full px-1.5 py-1 border border-slate-300 rounded text-xs" />
+                </div>
+                <div>
+                  <label class="block text-[10px] text-slate-500">Kapazität ({{ s.assignments|length }} belegt)</label>
+                  <input type="number" min="{{ s.assignments|length }}" name="capacity_{{ s.id }}" value="{{ s.capacity }}"
+                         class="w-full px-1.5 py-1 border border-slate-300 rounded text-xs" />
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </form>
     </div>
   </details>
   {% endfor %}
@@ -100,6 +154,9 @@
 
 <style>
   details[open] .details-chevron { transform: rotate(180deg); }
+  .shift-bulk-form .edit-only { display: none; }
+  .shift-bulk-form.editing .edit-only { display: block; }
+  .shift-bulk-form.editing .view-only { display: none; }
 </style>
 
 <!-- Dialog: Neue Schicht -->

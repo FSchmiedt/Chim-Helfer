@@ -108,6 +108,9 @@ class Helper(Base):
     pfand_paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     pfand_returned: Mapped[bool] = mapped_column(Boolean, default=False)
     pfand_returned_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Person muss gar kein Pfand zahlen (Einzelfall-Ausnahme). Zaehlt fuer die
+    # gruene Pfand-Anzeige in der Uebersicht wie eine bezahlte Kaution.
+    pfand_exempt: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Einwilligungen
     is_adult_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)

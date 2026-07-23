@@ -238,7 +238,9 @@
           {% endif %}
         </td>
         <td class="px-4 py-2">
-          {% if h.pfand_returned %}
+          {% if h.pfand_exempt %}
+            <span title="muss kein Pfand zahlen" class="inline-block px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">✓ kein Pfand nötig</span>
+          {% elif h.pfand_returned %}
             <span title="Pfand bezahlt und zurückgegeben" class="inline-block px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">✓ zurück</span>
           {% elif h.pfand_paid %}
             <span title="Pfand bezahlt, noch nicht zurück" class="inline-block px-1.5 py-0.5 bg-sky-100 text-sky-700 rounded text-xs">bezahlt</span>
