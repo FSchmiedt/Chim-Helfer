@@ -158,7 +158,7 @@
 {% set base_q = qp|join('&') %}
 
 <!-- Tabelle -->
-<div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+<div class="bg-white border border-slate-200 rounded-lg overflow-x-auto">
   <table class="min-w-full divide-y divide-slate-200">
     <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
       <tr>
@@ -224,16 +224,19 @@
         </td>
         <td class="px-4 py-2">
           {% set cls = {'registered': 'bg-slate-100 text-slate-700', 'confirmed': 'bg-green-100 text-green-700', 'declined': 'bg-red-100 text-red-700', 'withdrawn': 'bg-amber-100 text-amber-700'}[h.status] %}
-          <span class="inline-block px-2 py-0.5 rounded text-xs {{ cls }}">{{ h.status }}</span>
+          {% set status_symbol = {'registered': '🙋', 'confirmed': '✓', 'declined': '✕', 'withdrawn': '↩'}[h.status] %}
+          {% set status_label = {'registered': 'angemeldet', 'confirmed': 'bestätigt', 'declined': 'abgelehnt', 'withdrawn': 'zurückgezogen'}[h.status] %}
+          <span title="{{ status_label }}"
+                class="inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold {{ cls }}">{{ status_symbol }}</span>
         </td>
         <td class="px-4 py-2 whitespace-nowrap">
           {% if changed_at.get(h.id) %}
             <a href="/admin/helpers/{{ h.id }}#historie"
-               title="letzte Schichtänderung"
-               class="inline-block px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded text-xs hover:bg-indigo-100">{{ changed_at.get(h.id)|localdt }}</a>
+               title="letzte Schichtänderung: {{ changed_at.get(h.id)|localdt }}"
+               class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-semibold">✓</a>
           {% else %}
             <span title="seit {{ tracking_since.strftime('%d.%m.%Y') }} keine Änderung protokolliert"
-                  class="text-slate-300 text-xs">—</span>
+                  class="text-slate-300 text-xs">–</span>
           {% endif %}
         </td>
         <td class="px-4 py-2 whitespace-nowrap">
@@ -247,13 +250,13 @@
         </td>
         <td class="px-4 py-2">
           {% if h.pfand_exempt %}
-            <span title="muss kein Pfand zahlen" class="inline-block px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">✓ kein Pfand nötig</span>
+            <span title="muss kein Pfand zahlen" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold">✓</span>
           {% elif h.pfand_returned %}
-            <span title="Pfand bezahlt und zurückgegeben" class="inline-block px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">✓ zurück</span>
+            <span title="Pfand bezahlt und zurückgegeben" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold">✓</span>
           {% elif h.pfand_paid %}
-            <span title="Pfand bezahlt, noch nicht zurück" class="inline-block px-1.5 py-0.5 bg-sky-100 text-sky-700 rounded text-xs">bezahlt</span>
+            <span title="Pfand bezahlt, noch nicht zurück" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold">✓</span>
           {% else %}
-            <span class="text-slate-300 text-xs">—</span>
+            <span class="text-slate-300 text-xs">–</span>
           {% endif %}
         </td>
         <td class="px-4 py-2">
