@@ -1,0 +1,4 @@
+# Zusätzlich zu requirements.txt, nur für lokale Tests (nicht in Prod nötig).
+-r requirements.txt
+pytest==8.3.4
+httpx==0.28.1

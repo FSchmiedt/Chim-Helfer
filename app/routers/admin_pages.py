@@ -56,6 +56,7 @@ templates.env.filters["localdt"] = _fmt_local
 SEGMENT_LABELS = {
     "no_shifts": "ohne Schichten",
     "below_soll": "unter Soll",
+    "has_shifts": "min. eine Schicht",
 }
 
 
@@ -96,12 +97,16 @@ def parse_local_dt(raw: str | None):
 
 
 def apply_segment_filters(query, tag: str | None, segments: list[str] | None,
-                          views_lt: int | None = None, me_before: str | None = None):
-    """Filtert nach Markierung (UND) und berechneten Gruppen (ODER untereinander).
+                          views_lt: int | None = None, me_before: str | None = None,
+                          pfand_bezahlt: str | None = None):
+    """Filtert nach Markierung (UND), berechneten Gruppen (ODER untereinander)
+    und optional dem Pfand-Bezahlstatus (UND).
 
-    Die Gruppen sind ueberschneidungsfrei: "ohne Schichten" = 0 Schichten,
-    "unter Soll" = mindestens 1, aber weniger als das Soll. Mehrere Gruppen
-    werden mit ODER verknuepft, die Markierung zusaetzlich mit UND.
+    Die Gruppen "ohne Schichten" (0 Schichten) und "unter Soll" (mind. 1, aber
+    weniger als das Soll) sind ueberschneidungsfrei. "min. eine Schicht" ist
+    bewusst keine dritte, disjunkte Gruppe, sondern schlicht das Komplement zu
+    "ohne Schichten" (>= 1 Schicht, unabhaengig vom Soll) - wer sie zusammen
+    mit einer anderen Gruppe anhakt, bekommt die ODER-Vereinigung.
     """
     if tag:
         query = query.filter(
@@ -119,7 +124,22 @@ def apply_segment_filters(query, tag: str | None, segments: list[str] | None,
             # Bewusst OHNE die Nuller: die haben ihre eigene Gruppe. Wer beides
             # will, hakt beide an - die Gruppen sind ODER-verknuepft.
             conds.append((cnt > 0) & (cnt < _soll_expr()))
+        if "has_shifts" in segments:
+            conds.append(cnt >= 1)
         query = query.filter(or_(*conds))
+
+    # Pfand-Bezahlstatus. Wer von der Kaution befreit ist (Einzelfall-Ausnahme),
+    # zaehlt fuer diesen Filter als "bezahlt" - die Person schuldet ja nichts
+    # mehr. Getrennt vom granularen "Pfand"-Dropdown (unpaid/paid/returned),
+    # das fuer die Rueckgabe-Abwicklung vor Ort gedacht ist.
+    if pfand_bezahlt == "yes":
+        query = query.filter(
+            or_(models.Helper.pfand_paid.is_(True), models.Helper.pfand_exempt.is_(True))
+        )
+    elif pfand_bezahlt == "no":
+        query = query.filter(
+            models.Helper.pfand_paid.is_(False), models.Helper.pfand_exempt.is_(False)
+        )
 
     # Wie oft wurde /me geoeffnet? NULL zaehlt als 0 (Spalte kam spaeter dazu).
     if views_lt is not None:
@@ -434,6 +454,7 @@ def helpers_list(
     verified: str | None = Query(None),  # "yes" | "no"
     tag: str | None = Query(None),
     segment: list[str] | None = Query(None),
+    pfand_bezahlt: str | None = Query(None),  # "yes" | "no" - Pfand-Exempt zaehlt als "yes"
     views_lt: str | None = Query(None),
     me_before: str | None = Query(None),
     q: str | None = Query(None),
@@ -479,7 +500,7 @@ def helpers_list(
     elif verified == "no":
         query = query.filter(models.Helper.email_verified_at.is_(None))
     query = apply_segment_filters(query, tag, segment,
-                                  _parse_int_or_none(views_lt), me_before)
+                                  _parse_int_or_none(views_lt), me_before, pfand_bezahlt)
     if q:
         like = f"%{q.lower()}%"
         query = query.filter(
@@ -525,6 +546,7 @@ def helpers_list(
             verified=verified,
             tag=tag,
             segment=segment or [],
+            pfand_bezahlt=pfand_bezahlt or "",
             views_lt=views_lt or "",
             me_before=me_before or "",
             all_tags=_all_tags(db),
@@ -1600,6 +1622,7 @@ def mail_page(
     status_filter: str | None = Query(None, alias="status"),
     tag: str | None = Query(None),
     segment: list[str] | None = Query(None),
+    pfand_bezahlt: str | None = Query(None),  # "yes" | "no" - Pfand-Exempt zaehlt als "yes"
     views_lt: str | None = Query(None),
     me_before: str | None = Query(None),
 ):
@@ -1635,7 +1658,7 @@ def mail_page(
     if status_filter:
         query = query.filter(models.Helper.status == status_filter)
     query = apply_segment_filters(query, tag, segment,
-                                  _parse_int_or_none(views_lt), me_before)
+                                  _parse_int_or_none(views_lt), me_before, pfand_bezahlt)
     helpers = query.order_by(models.Helper.last_name, models.Helper.first_name).distinct().all()
 
     days = db.query(models.FestivalDay).order_by(models.FestivalDay.sort_order, models.FestivalDay.date).all()
@@ -1655,6 +1678,7 @@ def mail_page(
             status_filter=status_filter,
             tag=tag,
             segment=segment or [],
+            pfand_bezahlt=pfand_bezahlt or "",
             views_lt=views_lt or "",
             me_before=me_before or "",
             all_tags=_all_tags(db),
@@ -1767,6 +1791,7 @@ def export_emails(
     status_filter: str | None = Query(None, alias="status"),
     tag: str | None = Query(None),
     segment: list[str] | None = Query(None),
+    pfand_bezahlt: str | None = Query(None),
     views_lt: str | None = Query(None),
     me_before: str | None = Query(None),
 ):
@@ -1788,7 +1813,7 @@ def export_emails(
     if status_filter:
         query = query.filter(models.Helper.status == status_filter)
     query = apply_segment_filters(query, tag, segment,
-                                  _parse_int_or_none(views_lt), me_before)
+                                  _parse_int_or_none(views_lt), me_before, pfand_bezahlt)
     helpers = query.distinct().all()
     return Response(
         content=emails_to_csv(helpers),

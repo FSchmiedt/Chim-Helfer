@@ -79,6 +79,14 @@
       {% for t in all_tags %}<option value="{{ t }}" {% if tag == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
     </select>
   </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Pfand bezahlt</label>
+    <select name="pfand_bezahlt" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
+      <option value="">– egal –</option>
+      <option value="yes" {% if pfand_bezahlt == 'yes' %}selected{% endif %}>bezahlt (Pfand-befreite zählen mit)</option>
+      <option value="no" {% if pfand_bezahlt == 'no' %}selected{% endif %}>noch nicht bezahlt</option>
+    </select>
+  </div>
   <div class="md:col-span-3">
     <label class="block text-xs text-slate-500 mb-1">Gruppe (Mehrfachauswahl, ODER-verknüpft)</label>
     <div class="flex flex-wrap gap-4 pt-1">
@@ -116,7 +124,7 @@
       <div class="flex gap-1">
         <button type="button" onclick="copyEmails(this)"
                 class="text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded">📋 kopieren</button>
-        <a href="/admin/export/emails.csv?{% if day_id %}day_id={{ day_id }}&{% endif %}{% if area_id %}area_id={{ area_id }}&{% endif %}{% if status_filter %}status={{ status_filter }}&{% endif %}{% if tag %}tag={{ tag }}&{% endif %}{% for s in segment %}segment={{ s }}&{% endfor %}{% if views_lt %}views_lt={{ views_lt }}&{% endif %}{% if me_before %}me_before={{ me_before }}&{% endif %}"
+        <a href="/admin/export/emails.csv?{% if day_id %}day_id={{ day_id }}&{% endif %}{% if area_id %}area_id={{ area_id }}&{% endif %}{% if status_filter %}status={{ status_filter }}&{% endif %}{% if tag %}tag={{ tag }}&{% endif %}{% for s in segment %}segment={{ s }}&{% endfor %}{% if pfand_bezahlt %}pfand_bezahlt={{ pfand_bezahlt }}&{% endif %}{% if views_lt %}views_lt={{ views_lt }}&{% endif %}{% if me_before %}me_before={{ me_before }}&{% endif %}"
            class="text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded">⬇ CSV</a>
       </div>
     </div>
