@@ -412,9 +412,9 @@ def main() -> int:
 
         # Passwort vergessen-Flow (SMTP aus → generischer Erfolg, kein Enumerations-Leak)
         r = post_form(c_ben, "/forgot", [("email", "ben@example.org")])
-        check("POST /forgot (existing email)", r.status_code == 200 and "haben wir gerade einen Reset-Link" in r.text)
+        check("POST /forgot (existing email)", r.status_code == 200 and "ist ein Reset-Link zu dir unterwegs" in r.text)
         r = post_form(c_ben, "/forgot", [("email", "does-not-exist@example.org")])
-        check("POST /forgot (unknown email, no leak)", r.status_code == 200 and "haben wir gerade einen Reset-Link" in r.text)
+        check("POST /forgot (unknown email, no leak)", r.status_code == 200 and "ist ein Reset-Link zu dir unterwegs" in r.text)
 
         # Reset-Token aus DB ziehen
         with eng.connect() as conn:
@@ -659,8 +659,8 @@ def main() -> int:
             sb = conn.execute(sa_text("SELECT id FROM shifts WHERE label='Swap-Ben-Fr'")).scalar()
             sa_ = conn.execute(sa_text("SELECT id FROM shifts WHERE label='Swap-Anna-So'")).scalar()
             swap_day = conn.execute(sa_text("SELECT day_id FROM shifts WHERE id=:i"), {"i": sa_}).scalar()
-        c_admin.post(f"/admin/shifts/{sb}/assign", data={"helper_id": str(ben_id), "role_id": ""}, follow_redirects=False)
-        c_admin.post(f"/admin/shifts/{sa_}/assign", data={"helper_id": str(anna_id), "role_id": ""}, follow_redirects=False)
+        c_admin.post(f"/admin/shifts/{sb}/assign", data={"helper_id": str(ben_id), "role_id": "", "force": "1"}, follow_redirects=False)
+        c_admin.post(f"/admin/shifts/{sa_}/assign", data={"helper_id": str(anna_id), "role_id": "", "force": "1"}, follow_redirects=False)
         with eng.connect() as conn:
             ben_swap_assign = conn.execute(sa_text(
                 "SELECT id FROM shift_assignments WHERE helper_id=:h AND shift_id=:s"), {"h": ben_id, "s": sb}).scalar()
@@ -757,7 +757,7 @@ def main() -> int:
 
         # Tausch durchführen
         r = c_admin.post("/admin/swap", data={
-            "assignment_a": str(adm_assign_a), "assignment_b": str(adm_assign_b),
+            "assignment_a": str(adm_assign_a), "assignment_b": str(adm_assign_b), "force": "1",
         }, follow_redirects=False)
         check("admin swap performed", r.status_code == 303 and "flash=swapped" in r.headers.get("location", ""))
         with eng.connect() as conn:

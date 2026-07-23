@@ -886,8 +886,10 @@ def _redirect_to_helper_detail_with_link(request, db, helper, reset_url: str | N
     trust_ids = {t.role_id for t in helper.role_trusts}
     pref_areas = {p.area_id for p in helper.preferences}
     grouped_roles: dict[str, list[models.Role]] = {}
+    area_by_name: dict[str, models.Area] = {}
     for r in all_roles:
         grouped_roles.setdefault(r.area.name, []).append(r)
+        area_by_name.setdefault(r.area.name, r.area)
     assignments = (
         db.query(models.ShiftAssignment)
         .filter(models.ShiftAssignment.helper_id == helper.id)
@@ -898,13 +900,22 @@ def _redirect_to_helper_detail_with_link(request, db, helper, reset_url: str | N
         )
         .all()
     )
+    changes = (
+        db.query(models.ShiftChangeLog)
+        .filter(models.ShiftChangeLog.helper_id == helper.id)
+        .options(joinedload(models.ShiftChangeLog.counterpart))
+        .order_by(models.ShiftChangeLog.created_at.desc(), models.ShiftChangeLog.id.desc())
+        .all()
+    )
     return templates.TemplateResponse(
         "admin/helper_detail.html",
         _ctx(
             request, helper=helper, days=days, areas=areas,
-            all_roles=all_roles, grouped_roles=grouped_roles,
+            all_roles=all_roles, grouped_roles=grouped_roles, area_by_name=area_by_name,
             trust_ids=trust_ids, pref_areas=pref_areas,
             assignments=assignments, reset_url=reset_url,
+            changes=changes, action_labels=ACTION_LABELS, source_labels=SOURCE_LABELS,
+            tracking_since=TRACKING_SINCE,
             admin_flash=flash,
         ),
     )
