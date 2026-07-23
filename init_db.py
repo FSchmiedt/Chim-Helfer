@@ -53,6 +53,11 @@ NEW_COLUMNS_BY_TABLE = {
         # Besuchszähler für /me – Ersatz für Lesebestätigungen bei Rundmails.
         ("last_me_at", "TIMESTAMP"),
         ("me_view_count", "INTEGER"),
+        # Einwilligungen + Pfand-Ausnahme (Modell hatte diese schon, hier fehlten
+        # sie in der Migrationsliste -> deshalb "column does not exist" in Prod)
+        ("pfand_exempt", "BOOLEAN"),
+        ("is_adult_confirmed", "BOOLEAN"),
+        ("accepted_no_guarantee", "BOOLEAN"),
     ],
     "shift_swap_offers": [
         ("want_type", "VARCHAR(10)"),
@@ -69,6 +74,9 @@ BACKFILLS = [
     ("helpers", "UPDATE helpers SET wants_only_one_shift = 0 WHERE wants_only_one_shift IS NULL"),
     ("helpers", "UPDATE helpers SET discount_offered = 0 WHERE discount_offered IS NULL"),
     ("helpers", "UPDATE helpers SET me_view_count = 0 WHERE me_view_count IS NULL"),
+    ("helpers", "UPDATE helpers SET pfand_exempt = 0 WHERE pfand_exempt IS NULL"),
+    ("helpers", "UPDATE helpers SET is_adult_confirmed = 0 WHERE is_adult_confirmed IS NULL"),
+    ("helpers", "UPDATE helpers SET accepted_no_guarantee = 0 WHERE accepted_no_guarantee IS NULL"),
     ("shift_swap_offers", "UPDATE shift_swap_offers SET want_type = 'day' WHERE want_type IS NULL"),
     ("shift_swap_offers", "UPDATE shift_swap_offers SET allow_giveaway = 0 WHERE allow_giveaway IS NULL"),
 ]
