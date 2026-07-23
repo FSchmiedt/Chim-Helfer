@@ -204,7 +204,23 @@ async def me_shift_preference(request: Request, db: Session = Depends(get_db)):
     if redir:
         return redir
     form = await request.form()
-    helper.wants_only_one_shift = form.get("wants_only_one_shift") == "on"
+    new_pref = form.get("wants_only_one_shift") == "on"
+    helper.wants_only_one_shift = new_pref
+
+    # Wichtig: Selbst-Anmeldung hier via /me ist IMMER das 75€-Ticket - anders
+    # als das admin-seitige "wants_only_one_shift", das auch aus anderen
+    # organisatorischen Gruenden gesetzt wird (z.B. Aufbau-Helfer:innen, die
+    # nur noch 1 Zusatzschicht brauchen, aber kein 75€-Ticket zahlen).
+    # discount_offered ist das Feld, an dem Badges/Warnhinweise haengen -
+    # deshalb hier mitziehen, sonst zeigt das Tool fuer Selbst-Anmelder:innen
+    # faelschlich gar keinen Hinweis mehr an. KEINE Mail hier: die Person hat
+    # ja selbst gewaehlt, wir muessen ihr nichts anbieten.
+    if new_pref and not helper.discount_offered:
+        helper.discount_offered_at = datetime.utcnow()
+    if not new_pref:
+        helper.discount_offered_at = None
+    helper.discount_offered = new_pref
+
     db.commit()
     return RedirectResponse("/me?shift_pref_saved=1", status_code=303)
 

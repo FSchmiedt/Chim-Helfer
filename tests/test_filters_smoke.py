@@ -16,32 +16,20 @@ Verbindung noetig). Aufruf:
 """
 from __future__ import annotations
 
-import os
-import tempfile
 from datetime import date, time
 
 import pytest
 
-# WICHTIG: Env VOR jedem App-Import setzen, weil app.config.settings ein
-# Singleton ist, das beim Import ausgewertet wird.
-_TMP_DB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DB.name}"
-os.environ["ADMIN_USERNAME"] = "test-admin"
-os.environ["ADMIN_PASSWORD"] = "test-pw-123"
-os.environ["SECRET_KEY"] = "test-secret-key-not-for-prod"
-os.environ["MIN_SHIFTS"] = "2"
-os.environ["MIN_DAYS"] = "2"
+from fastapi.testclient import TestClient
 
-from fastapi.testclient import TestClient  # noqa: E402
-
-from app import models  # noqa: E402
-from app.database import Base, SessionLocal, engine  # noqa: E402
-from app.main import app  # noqa: E402
+from _dbutil import make_isolated_session_factory
+from app import models
+from app.main import app
 
 
 @pytest.fixture(scope="module")
 def client():
-    Base.metadata.create_all(bind=engine)
+    SessionLocal, teardown = make_isolated_session_factory()
     db = SessionLocal()
     try:
         day = models.FestivalDay(date=date(2026, 8, 14), label="Freitag", sort_order=0)
@@ -97,7 +85,7 @@ def client():
         assert resp.status_code in (302, 303), f"Login fehlgeschlagen: {resp.status_code}"
         yield c
 
-    os.unlink(_TMP_DB.name)
+    teardown()
 
 
 def _names(html: str) -> set[str]:

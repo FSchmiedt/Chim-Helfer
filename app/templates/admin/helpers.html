@@ -199,8 +199,8 @@
         </td>
         <td class="px-4 py-2">
           <a href="/admin/helpers/{{ h.id }}" class="font-medium hover:text-indigo-600">{{ h.first_name }} {{ h.last_name }}</a>
-          {% if h.wants_only_one_shift %}
-            <span title="möchte nur 1 Schicht (75 € Ticket)" class="text-orange-600 ml-1">⚠</span>
+          {% if h.discount_offered %}
+            <span title="75€-Ticket (nur 1 Schicht)" class="text-orange-600 ml-1">⚠</span>
           {% endif %}
         </td>
         <td class="px-4 py-2 text-slate-600">{{ h.email }}</td>
