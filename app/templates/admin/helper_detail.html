@@ -81,11 +81,12 @@
 
 <!-- 75€-Ein-Schicht-Angebot: oben, gut sichtbar, eigenes kleines Form -->
 <div class="mb-6 p-4 rounded-md bg-white border border-slate-200">
-  <form method="post" action="/admin/helpers/{{ helper.id }}/save"
-        onsubmit="return confirm('Speichern? Falls das Häkchen dabei NEU gesetzt wird, geht sofort eine Angebots-Mail an {{ helper.first_name }} raus (Absender automatisch bar@ oder helfen@chimaera-festival.de, je nach Bereich).');">
+  <form id="discount-form" method="post" action="/admin/helpers/{{ helper.id }}/save"
+        onsubmit="return confirmDiscountSave(this);">
     <input type="hidden" name="section" value="discount" />
     <label class="flex items-start gap-2 text-sm cursor-pointer">
       <input type="checkbox" name="discount_offered" {% if helper.discount_offered %}checked{% endif %}
+             data-was-checked="{{ '1' if helper.discount_offered else '0' }}"
              class="mt-0.5 rounded text-indigo-600 focus:ring-indigo-600" />
       <span>
         <span class="font-medium">75€-Ein-Schicht-Angebot machen</span>
@@ -112,6 +113,49 @@
     <button class="mt-3 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">Speichern</button>
   </form>
 </div>
+
+<!-- Gestylter Bestaetigungsdialog statt nativem confirm(), nur fuer den Mail-Fall -->
+<dialog id="discount-confirm-dialog" class="rounded-lg p-6 max-w-md backdrop:bg-black/40">
+  <h3 class="font-semibold mb-2 flex items-center gap-2">
+    <span class="text-lg">📧</span> Angebots-Mail wird verschickt
+  </h3>
+  <p class="text-sm text-slate-500 mb-4 leading-relaxed">
+    Wenn du jetzt speicherst, geht sofort eine Angebots-Mail an
+    <strong class="text-slate-700">{{ helper.first_name }}</strong> raus
+    (Absender automatisch <code class="text-xs bg-slate-100 px-1 py-0.5 rounded">bar@</code>
+    oder <code class="text-xs bg-slate-100 px-1 py-0.5 rounded">helfen@chimaera-festival.de</code>,
+    je nach Bereich).
+  </p>
+  <div class="flex justify-end gap-2">
+    <button type="button" onclick="document.getElementById('discount-confirm-dialog').close()"
+            class="px-3 py-1.5 rounded border border-slate-200 text-sm hover:bg-slate-50">Abbrechen</button>
+    <button type="button" onclick="discountDialogConfirmed()"
+            class="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-sm">Ja, Mail senden &amp; speichern</button>
+  </div>
+</dialog>
+
+<script>
+  // Beide Checkboxen (Angebot + Ein-Schicht) teilen sich ein Formular. Die
+  // Mail geht nur raus, wenn "discount_offered" NEU angehakt wird - also
+  // soll auch nur dann die Warnung erscheinen. Wer nur "wants_only_one_shift"
+  // aendert (oder das Angebots-Haekchen unveraendert laesst/entfernt),
+  // bekommt keinen Mail-Warnhinweis mehr vorgesetzt.
+  function confirmDiscountSave(form) {
+    var cb = form.discount_offered;
+    var wasChecked = cb.dataset.wasChecked === '1';
+    var newlyChecked = cb.checked && !wasChecked;
+    if (!newlyChecked) return true;  // kein Mail-Risiko -> direkt speichern
+    document.getElementById('discount-confirm-dialog').showModal();
+    return false;  // Submit erstmal abfangen, Dialog entscheidet
+  }
+
+  function discountDialogConfirmed() {
+    document.getElementById('discount-confirm-dialog').close();
+    // form.submit() feuert (anders als requestSubmit()) kein "submit"-Event,
+    // ruft also confirmDiscountSave() nicht erneut auf - keine Endlosschleife.
+    document.getElementById('discount-form').submit();
+  }
+</script>
 
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
