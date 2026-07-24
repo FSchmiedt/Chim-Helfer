@@ -85,8 +85,9 @@
         onsubmit="return confirmDiscountSave(this);">
     <input type="hidden" name="section" value="discount" />
     <label class="flex items-start gap-2 text-sm cursor-pointer">
-      <input type="checkbox" name="discount_offered" {% if helper.discount_offered %}checked{% endif %}
+      <input type="checkbox" id="discount-offered-cb" name="discount_offered" {% if helper.discount_offered %}checked{% endif %}
              data-was-checked="{{ '1' if helper.discount_offered else '0' }}"
+             onchange="syncOneShiftWithDiscount(this)"
              class="mt-0.5 rounded text-indigo-600 focus:ring-indigo-600" />
       <span>
         <span class="font-medium">75€-Ein-Schicht-Angebot machen</span>
@@ -100,7 +101,7 @@
     </label>
 
     <label class="flex items-start gap-2 text-sm mt-3 pt-3 border-t border-slate-100 cursor-pointer">
-      <input type="checkbox" name="wants_only_one_shift" {% if helper.wants_only_one_shift %}checked{% endif %}
+      <input type="checkbox" id="wants-only-one-shift-cb" name="wants_only_one_shift" {% if helper.wants_only_one_shift %}checked{% endif %}
              class="mt-0.5 rounded text-indigo-600 focus:ring-indigo-600" />
       <span>
         <span class="font-medium">Muss nur eine Schicht machen</span>
@@ -154,6 +155,17 @@
     // form.submit() feuert (anders als requestSubmit()) kein "submit"-Event,
     // ruft also confirmDiscountSave() nicht erneut auf - keine Endlosschleife.
     document.getElementById('discount-form').submit();
+  }
+
+  // 75€-Ticket bedeutet immer "nur 1 Schicht" (serverseitig ohnehin
+  // erzwungen, siehe admin_pages.py). Hier nur die Anzeige synchron halten,
+  // damit vor dem Speichern schon sichtbar ist, was rauskommt. Umgekehrt
+  // NICHT automatisch entfernen - "nur 1 Schicht" ohne Ticket bleibt
+  // ein legitimer eigener Fall (z.B. Aufbau-Helfer:innen).
+  function syncOneShiftWithDiscount(discountCb) {
+    if (discountCb.checked) {
+      document.getElementById('wants-only-one-shift-cb').checked = true;
+    }
   }
 </script>
 

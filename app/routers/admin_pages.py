@@ -799,7 +799,13 @@ async def _handle_helper_update(helper_id: int, request: Request, db: Session,
         # "muss nur eine Schicht machen" (z.B. Driver, hat schon ein Ticket).
         # Rein organisatorisch, loest keine Mail aus - anders als discount_offered
         # oben, das immer mit der 75€-Info-Mail zusammenhaengt.
-        helper.wants_only_one_shift = form.get("wants_only_one_shift") == "on"
+        new_one_shift = form.get("wants_only_one_shift") == "on"
+        # 75€-Ticket bedeutet immer "nur 1 Schicht" - das darf im Formular
+        # nicht auseinanderlaufen (sonst Soll=2 trotz Ticket). Nur einseitig:
+        # "nur 1 Schicht" OHNE Ticket (Aufbau-Helfer:innen etc.) bleibt erlaubt.
+        if new_discount:
+            new_one_shift = True
+        helper.wants_only_one_shift = new_one_shift
 
     db.commit()
     if discount_msg is not None:

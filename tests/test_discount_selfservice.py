@@ -100,3 +100,69 @@ def test_admin_set_one_shift_without_discount_shows_no_badge(client, session_loc
     html = client.get("/admin/helpers").text
     idx = html.find("Aufbau Helferin")
     assert "⚠" not in html[idx:idx + 250]
+
+
+def test_admin_discount_checkbox_forces_one_shift(client, session_local):
+    """Admin hakt NUR '75€-Angebot machen' an (vergisst/laesst 'nur 1
+    Schicht' unangetastet) - der Server muss wants_only_one_shift trotzdem
+    auf True setzen, sonst Soll=2 trotz Ticket."""
+    db = session_local()
+    try:
+        h = models.Helper(
+            first_name="Nur", last_name="Ticket", email="nurticket@example.org",
+            date_of_birth=date(1992, 3, 3),
+            wants_only_one_shift=False, discount_offered=False,
+        )
+        db.add(h)
+        db.commit()
+        hid = h.id
+    finally:
+        db.close()
+
+    client.post("/admin/login", data={"username": "test-admin", "password": "test-pw-123"})
+    resp = client.post(f"/admin/helpers/{hid}/save", data={
+        "section": "discount",
+        "discount_offered": "on",
+        # bewusst OHNE wants_only_one_shift im Formular
+    }, follow_redirects=False)
+    assert resp.status_code == 303
+
+    db = session_local()
+    try:
+        h = db.get(models.Helper, hid)
+        assert h.discount_offered is True
+        assert h.wants_only_one_shift is True  # serverseitig erzwungen
+    finally:
+        db.close()
+
+
+def test_admin_one_shift_alone_does_not_force_discount(client, session_local):
+    """Umgekehrt bleibt erlaubt: 'nur 1 Schicht' ohne Ticket (Aufbau-Fall) -
+    die Erzwingung ist bewusst einseitig."""
+    db = session_local()
+    try:
+        h = models.Helper(
+            first_name="Nur", last_name="Organisatorisch", email="organisatorisch@example.org",
+            date_of_birth=date(1993, 4, 4),
+        )
+        db.add(h)
+        db.commit()
+        hid = h.id
+    finally:
+        db.close()
+
+    client.post("/admin/login", data={"username": "test-admin", "password": "test-pw-123"})
+    resp = client.post(f"/admin/helpers/{hid}/save", data={
+        "section": "discount",
+        "wants_only_one_shift": "on",
+        # bewusst OHNE discount_offered im Formular
+    }, follow_redirects=False)
+    assert resp.status_code == 303
+
+    db = session_local()
+    try:
+        h = db.get(models.Helper, hid)
+        assert h.wants_only_one_shift is True
+        assert h.discount_offered is False  # bleibt unangetastet
+    finally:
+        db.close()
