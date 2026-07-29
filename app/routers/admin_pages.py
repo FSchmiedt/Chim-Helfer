@@ -59,6 +59,17 @@ SEGMENT_LABELS = {
     "has_shifts": "min. eine Schicht",
 }
 
+# Wer abgesagt oder zurueckgezogen hat, ist aus der Planung raus: das Soll ist
+# faktisch 0. Solche Leute duerfen die "was ist noch offen"-Ansichten nicht
+# aufblaehen (Dashboard "Nicht verplant", Segment "ohne Schichten", Pfand
+# "noch nicht bezahlt", Mail-/CSV-Verteiler).
+INACTIVE_STATUSES = ("declined", "withdrawn")
+
+
+def _is_active():
+    """SQL-Bedingung: Person steckt noch in der Planung."""
+    return models.Helper.status.notin_(INACTIVE_STATUSES)
+
 
 def _assignment_count_subq():
     """Anzahl Schichten je Helfer:in als korrelierte Subquery."""
@@ -119,12 +130,17 @@ def apply_segment_filters(query, tag: str | None, segments: list[str] | None,
         cnt = _assignment_count_subq()
         conds = []
         if "no_shifts" in segments:
-            conds.append(cnt == 0)
+            # Abgesagte/Zurueckgezogene sind hier bewusst raus: sie sollen
+            # keine Schicht mehr bekommen, tauchen also nicht als Luecke auf.
+            conds.append((cnt == 0) & _is_active())
         if "below_soll" in segments:
             # Bewusst OHNE die Nuller: die haben ihre eigene Gruppe. Wer beides
             # will, hakt beide an - die Gruppen sind ODER-verknuepft.
-            conds.append((cnt > 0) & (cnt < _soll_expr()))
+            conds.append((cnt > 0) & (cnt < _soll_expr()) & _is_active())
         if "has_shifts" in segments:
+            # Hier bewusst OHNE Status-Ausschluss: wer zurueckgezogen hat und
+            # noch auf einer Schicht steht, ist genau der Fall, den man sehen
+            # muss, um umzuplanen.
             conds.append(cnt >= 1)
         query = query.filter(or_(*conds))
 
@@ -137,8 +153,13 @@ def apply_segment_filters(query, tag: str | None, segments: list[str] | None,
             or_(models.Helper.pfand_paid.is_(True), models.Helper.pfand_exempt.is_(True))
         )
     elif pfand_bezahlt == "no":
+        # Abgesagte/Zurueckgezogene schulden nichts mehr - sie stehen nicht auf
+        # der "wer muss noch zahlen"-Liste. Bei "yes" bleiben sie dagegen drin:
+        # wer gezahlt hat, kriegt sein Pfand auch nach der Absage zurueck.
         query = query.filter(
-            models.Helper.pfand_paid.is_(False), models.Helper.pfand_exempt.is_(False)
+            models.Helper.pfand_paid.is_(False),
+            models.Helper.pfand_exempt.is_(False),
+            _is_active(),
         )
 
     # Wie oft wurde /me geoeffnet? NULL zaehlt als 0 (Spalte kam spaeter dazu).
@@ -247,10 +268,11 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     total_assigned = db.query(func.count(models.ShiftAssignment.id)).scalar() or 0
     open_slots = max(0, total_shift_capacity - total_assigned)
 
-    # Nicht verplante Helfer:innen
+    # Nicht verplante Helfer:innen. Abgesagte/Zurueckgezogene zaehlen nicht mit -
+    # die brauchen keine Schicht mehr, waeren also eine Scheinluecke.
     assigned_helper_ids = db.query(models.ShiftAssignment.helper_id).distinct().all()
     assigned_helper_ids = {r[0] for r in assigned_helper_ids}
-    all_helper_ids = {r[0] for r in db.query(models.Helper.id).all()}
+    all_helper_ids = {r[0] for r in db.query(models.Helper.id).filter(_is_active()).all()}
     unassigned_count = len(all_helper_ids - assigned_helper_ids)
 
     # Pfand-Übersicht
@@ -1662,7 +1684,12 @@ def mail_page(
         if assigned_area_id_int:
             query = query.filter(models.Shift.area_id == assigned_area_id_int)
     if status_filter:
+        # Explizit angefragter Status sticht: so kommt man weiterhin gezielt an
+        # die Zurueckgezogenen ran (z.B. "schade, meld dich gern wieder").
         query = query.filter(models.Helper.status == status_filter)
+    else:
+        # "An alle" heisst: an alle, die noch dabei sind.
+        query = query.filter(_is_active())
     query = apply_segment_filters(query, tag, segment,
                                   _parse_int_or_none(views_lt), me_before, pfand_bezahlt)
     helpers = query.order_by(models.Helper.last_name, models.Helper.first_name).distinct().all()
@@ -1817,7 +1844,10 @@ def export_emails(
             models.HelperAreaPreference.rank < 5,
         )
     if status_filter:
+        # Wie beim Mail-Verteiler: expliziter Status sticht.
         query = query.filter(models.Helper.status == status_filter)
+    else:
+        query = query.filter(_is_active())
     query = apply_segment_filters(query, tag, segment,
                                   _parse_int_or_none(views_lt), me_before, pfand_bezahlt)
     helpers = query.distinct().all()

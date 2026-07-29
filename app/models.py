@@ -87,10 +87,6 @@ class Helper(Base):
     iban: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     paypal: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
-    # Pfand-Tracking (nur Admin; True = erledigt)
-    pfand_paid: Mapped[bool] = mapped_column(Boolean, default=False)
-    pfand_returned: Mapped[bool] = mapped_column(Boolean, default=False)
-
     # Erfahrung
     been_here_before: Mapped[bool] = mapped_column(Boolean, default=False)
     previous_festivals: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

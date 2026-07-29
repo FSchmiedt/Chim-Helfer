@@ -1,0 +1,53 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Erlaubt manuelles Starten ueber den Actions-Tab, z.B. nach einem
+  # Konfig-Fix, ohne dafuer einen Leer-Commit zu bauen.
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          # Cached die pip-Downloads zwischen Laeufen. Der Hash der
+          # requirements-Dateien ist der Cache-Key: aendert sich eine Version,
+          # wird automatisch neu geladen.
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        # Die Tests bauen sich ihre eigene SQLite-DB (tests/_dbutil.py), es
+        # wird also weder Postgres noch eine DATABASE_URL gebraucht.
+        run: pytest tests/ -v
+
+      - name: Run end-to-end smoke test
+        # smoke_test.py ist kein pytest-File, sondern ein eigenstaendiges
+        # Skript: es legt sich per init_db.py eine frische SQLite-DB an,
+        # startet einen eigenen uvicorn auf Port 8766 und klappert die
+        # Endpunkte ab (~130 Checks, ca. 15 Sekunden). Alle noetigen
+        # Env-Variablen setzt es selbst, Exit-Code 1 bei Fehlern.
+        #
+        # Laeuft bewusst NACH pytest: die Unit-Tests sind schneller und
+        # zeigen bei einem Fehler praeziser, wo es klemmt. Der Smoke-Test
+        # ist eine lange abhaengige Kette - kippt ein Check in der Mitte,
+        # koennen die folgenden mitgerissen werden.
+        run: python smoke_test.py

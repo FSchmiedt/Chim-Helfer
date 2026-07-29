@@ -74,7 +74,9 @@
         <div class="flex-shrink-0 w-full sm:w-auto">
           {% if matching or o.allow_giveaway %}
             <form method="post" action="/board/{{ o.id }}/take"
-                  onsubmit="return confirm('Tausch durchführen?');"
+                  data-confirm="Der Tausch wird sofort wirksam. Danach steht die neue Schicht in deiner Übersicht."
+                  data-confirm-title="Tausch durchführen"
+                  data-confirm-label="Ja, tauschen"
                   class="space-y-2">
               {% if matching %}
                 <label class="block text-xs text-slate-500">Deine Gegenschicht:</label>

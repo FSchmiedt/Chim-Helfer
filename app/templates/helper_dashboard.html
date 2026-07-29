@@ -182,7 +182,10 @@
             Direkt mit Freund:in tauschen
           </a>
           <form method="post" action="/me/assignments/{{ a.id }}/withdraw"
-                onsubmit="return confirm('Wirklich aus dieser Schicht austragen? Sie wird dann wieder für andere frei — ein erneutes Eintragen ist nicht garantiert.');">
+                data-confirm="Die Schicht wird sofort wieder für andere frei. Ein erneutes Eintragen ist nicht garantiert."
+                data-confirm-title="Aus der Schicht austragen"
+                data-confirm-label="Ja, austragen"
+                data-confirm-danger>
             <button class="px-3 py-1.5 text-xs rounded bg-white border border-red-300 hover:bg-red-50 text-red-700">
               Austragen
             </button>

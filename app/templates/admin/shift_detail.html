@@ -54,7 +54,10 @@
     <p class="text-sm text-slate-500 mt-1">Kapazität: {{ shift.assignments|length }} / {{ shift.capacity }}</p>
   </div>
   <form method="post" action="/admin/shifts/{{ shift.id }}/delete"
-        onsubmit="return confirm('Schicht löschen?');">
+        data-confirm="Die Schicht und alle Zuweisungen darauf werden gelöscht. Das lässt sich nicht rückgängig machen."
+        data-confirm-title="Schicht löschen"
+        data-confirm-label="Ja, Schicht löschen"
+        data-confirm-danger>
     <button class="px-3 py-1.5 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded text-sm">Schicht löschen</button>
   </form>
 </div>

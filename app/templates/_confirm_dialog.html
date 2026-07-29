@@ -1,0 +1,91 @@
+{#
+  Gemeinsamer Bestaetigungsdialog statt nativem confirm().
+
+  Verwendung: dem <form> ein data-confirm mit dem Fragetext geben.
+
+      <form method="post" action="..."
+            data-confirm="Schicht wirklich löschen?"
+            data-confirm-title="Schicht löschen"
+            data-confirm-label="Ja, löschen"
+            data-confirm-danger>
+
+  Optional:
+    data-confirm-title   Ueberschrift        (Default: "Bist du sicher?")
+    data-confirm-label   Text des Ja-Buttons (Default: "Ja, weiter")
+    data-confirm-danger  vorhanden -> roter Button statt dunklem
+
+  Der Dialog wird ueber einen delegierten submit-Listener aufgehaengt, es
+  braucht also kein onsubmit am einzelnen Formular. Formulare OHNE
+  data-confirm laufen unveraendert durch - der 75€-Dialog in
+  admin/helper_detail.html hat seine eigene Sonderlogik und bleibt, wie er ist.
+#}
+<dialog id="app-confirm-dialog"
+        class="rounded-lg p-6 max-w-md w-[90vw] backdrop:bg-black/40 text-slate-800">
+  <h3 id="app-confirm-title" class="font-semibold mb-2"></h3>
+  <p id="app-confirm-text" class="text-sm text-slate-500 mb-5 leading-relaxed"></p>
+  <div class="flex justify-end gap-2">
+    <button type="button" id="app-confirm-cancel"
+            class="px-3 py-1.5 rounded border border-slate-300 text-sm hover:bg-slate-50">
+      Abbrechen
+    </button>
+    <button type="button" id="app-confirm-ok"
+            class="px-3 py-1.5 rounded text-white text-sm"></button>
+  </div>
+</dialog>
+
+<script>
+  (function () {
+    const dialog = document.getElementById('app-confirm-dialog');
+    if (!dialog || typeof dialog.showModal !== 'function') return;  // uralter Browser: nativ weiter
+
+    const titleEl  = document.getElementById('app-confirm-title');
+    const textEl   = document.getElementById('app-confirm-text');
+    const okBtn    = document.getElementById('app-confirm-ok');
+    const cancelBtn = document.getElementById('app-confirm-cancel');
+
+    const DANGER  = 'bg-red-600 hover:bg-red-700';
+    const NEUTRAL = 'bg-slate-900 hover:bg-slate-700';
+
+    // Das Formular, das gerade auf eine Antwort wartet.
+    let pendingForm = null;
+
+    document.addEventListener('submit', function (ev) {
+      const form = ev.target;
+      if (!(form instanceof HTMLFormElement)) return;
+      if (!form.dataset.confirm) return;
+      // Zweiter Durchlauf nach dem Bestaetigen: durchlassen, sonst Endlosschleife.
+      if (form.dataset.confirmed === '1') return;
+
+      ev.preventDefault();
+      pendingForm = form;
+
+      titleEl.textContent = form.dataset.confirmTitle || 'Bist du sicher?';
+      textEl.textContent  = form.dataset.confirm;
+      okBtn.textContent   = form.dataset.confirmLabel || 'Ja, weiter';
+      okBtn.className = 'px-3 py-1.5 rounded text-white text-sm '
+        + (form.hasAttribute('data-confirm-danger') ? DANGER : NEUTRAL);
+
+      dialog.showModal();
+      cancelBtn.focus();  // Fokus bewusst auf "Abbrechen", nicht auf der Aktion
+    }, true);  // capture: greift vor etwaigen onsubmit-Handlern am Formular
+
+    okBtn.addEventListener('click', function () {
+      const form = pendingForm;
+      dialog.close();
+      if (!form) return;
+      form.dataset.confirmed = '1';
+      // requestSubmit statt submit(): loest den submit-Event regulaer aus, damit
+      // eventuelle onsubmit-Handler am Formular nicht uebersprungen werden.
+      if (typeof form.requestSubmit === 'function') {
+        form.requestSubmit();
+      } else {
+        form.submit();
+      }
+    });
+
+    cancelBtn.addEventListener('click', function () { dialog.close(); });
+
+    // Escape / Klick auf "Abbrechen" -> Formular bleibt unbestaetigt.
+    dialog.addEventListener('close', function () { pendingForm = null; });
+  })();
+</script>

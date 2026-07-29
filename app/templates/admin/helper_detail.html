@@ -25,7 +25,10 @@
     </p>
   </div>
   <form method="post" action="/admin/helpers/{{ helper.id }}/delete"
-        onsubmit="return confirm('Diese Helfer:in inkl. aller Zuweisungen wirklich löschen?');">
+        data-confirm="{{ helper.first_name }} {{ helper.last_name }} wird mit allen Schichtzuweisungen gelöscht. Das lässt sich nicht rückgängig machen."
+        data-confirm-title="Helfer:in löschen"
+        data-confirm-label="Ja, endgültig löschen"
+        data-confirm-danger>
     <button class="px-3 py-1.5 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded text-sm">Löschen</button>
   </form>
 </div>
@@ -60,7 +63,9 @@
 <!-- Admin-Aktionen außerhalb der Edit-Forms (nested forms sind ungültig) -->
 <div class="mb-6 flex flex-wrap items-center gap-2 text-xs">
   <form method="post" action="/admin/helpers/{{ helper.id }}/reset-link"
-        onsubmit="return confirm('Neuen Reset-Link erzeugen? Der alte wird ungültig.');"
+        data-confirm="Ein bereits verschickter Reset-Link wird damit ungültig. Der neue Link gilt 24 Stunden und wird dir hier einmalig angezeigt."
+        data-confirm-title="Neuen Reset-Link erzeugen"
+        data-confirm-label="Ja, Link erzeugen"
         class="inline">
     <button class="px-3 py-1.5 bg-white border border-slate-300 rounded hover:bg-slate-50">
       🔑 Passwort-Reset-Link erzeugen
@@ -68,7 +73,9 @@
   </form>
   {% if not helper.email_verified_at %}
   <form method="post" action="/admin/helpers/{{ helper.id }}/resend-verify"
-        onsubmit="return confirm('Verifikations-Mail an {{ helper.email }} schicken (mit Kopie an unsere Festival-Adresse)?');"
+        data-confirm="Es geht sofort eine Verifikations-Mail an {{ helper.email }} raus, mit Kopie an unsere Festival-Adresse."
+        data-confirm-title="Verifikations-Mail senden"
+        data-confirm-label="Ja, Mail senden"
         class="inline">
     <button class="px-3 py-1.5 bg-white border border-amber-300 text-amber-800 rounded hover:bg-amber-50">
       📧 Email-Verifikation erneut senden

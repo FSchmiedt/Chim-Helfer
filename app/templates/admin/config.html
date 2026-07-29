@@ -18,7 +18,10 @@
           <div class="text-xs text-slate-500">{{ d.date.strftime('%A, %d.%m.%Y') }}</div>
         </div>
         <form method="post" action="/admin/config/days/{{ d.id }}/delete"
-              onsubmit="return confirm('Tag löschen? Alle Verfügbarkeiten und Schichten dieses Tages gehen verloren.');">
+              data-confirm="Alle Verfügbarkeiten und Schichten dieses Tages gehen verloren. Das lässt sich nicht rückgängig machen."
+              data-confirm-title="Festivaltag löschen"
+              data-confirm-label="Ja, Tag löschen"
+              data-confirm-danger>
           <button class="text-xs text-red-600 hover:underline">löschen</button>
         </form>
       </li>
@@ -54,7 +57,10 @@
             {% if a.description %}<div class="text-xs text-slate-500">{{ a.description }}</div>{% endif %}
           </div>
           <form method="post" action="/admin/config/areas/{{ a.id }}/delete"
-                onsubmit="return confirm('Bereich löschen? Alle Schichten und Wünsche dazu gehen verloren.');">
+                data-confirm="Alle Schichten und Bereichswünsche dazu gehen verloren. Das lässt sich nicht rückgängig machen."
+                data-confirm-title="Bereich löschen"
+                data-confirm-label="Ja, Bereich löschen"
+                data-confirm-danger>
             <button class="text-xs text-red-600 hover:underline">löschen</button>
           </form>
         </div>
