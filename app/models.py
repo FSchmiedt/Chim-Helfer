@@ -107,7 +107,16 @@ class Helper(Base):
     # Person muss gar kein Pfand zahlen (Einzelfall-Ausnahme). Zaehlt fuer die
     # gruene Pfand-Anzeige in der Uebersicht wie eine bezahlte Kaution.
     pfand_exempt: Mapped[bool] = mapped_column(Boolean, default=False)
-
+    # Person hat angekuendigt, bis zu einem Datum zu ueberweisen. Rein
+    # organisatorisch: gelbe Markierung in der Uebersicht, damit man weiss,
+    # dass hinter dem offenen Betrag schon eine Zusage steht. Wird beim
+    # Setzen von pfand_paid serverseitig zurueckgesetzt.
+    pfand_announced: Mapped[bool] = mapped_column(Boolean, default=False)
+    pfand_announced_due: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    # Merker fuer den Zusagen-Durchlauf (app/pfand_promises.py): wann ging die
+    # Ueberfaelligkeits-Meldung raus? Verhindert, dass dieselbe Zusage in
+    # mehreren Sammelmails auftaucht.
+    pfand_announced_notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # Einwilligungen
     is_adult_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     accepted_no_guarantee: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -282,10 +282,27 @@
       </span>
     </label>
 
+    <label class="flex items-start gap-2 text-sm mb-2 cursor-pointer">
+      <input type="checkbox" name="pfand_announced" {% if helper.pfand_announced %}checked{% endif %}
+             class="mt-0.5 rounded text-indigo-600 focus:ring-indigo-600" />
+      <span>
+        <span class="font-medium">Zahlung angekündigt</span>
+        <span class="block text-xs text-slate-500">Markiert die Person gelb in der Übersicht.</span>
+      </span>
+    </label>
+
+    <div class="mb-4 pl-6">
+      <label class="block text-xs text-slate-500 mb-1" for="pfand_announced_due">Zugesagt bis</label>
+      <input type="date" id="pfand_announced_due" name="pfand_announced_due"
+             value="{{ helper.pfand_announced_due.isoformat() if helper.pfand_announced_due else '' }}"
+             class="px-2 py-1.5 border border-slate-300 rounded text-sm" />
+    </div>
+
     <button class="w-full px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">Pfand speichern</button>
 
     <p class="text-xs text-slate-500 mt-3">
       Zurückgabe setzt sich automatisch zurück, wenn „bezahlt" ausgehakt wird.
+      Die Ankündigung verfällt, sobald „bezahlt" gesetzt ist.
     </p>
   </form>
 

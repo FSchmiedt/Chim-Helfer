@@ -56,6 +56,11 @@ NEW_COLUMNS_BY_TABLE = {
         # Einwilligungen + Pfand-Ausnahme (Modell hatte diese schon, hier fehlten
         # sie in der Migrationsliste -> deshalb "column does not exist" in Prod)
         ("pfand_exempt", "BOOLEAN"),
+        # Angekuendigte Ueberweisung: Flag + Frist (Datum, kein Zeitstempel).
+        # Frist-Details schreibt das Team in die Notizen.
+        ("pfand_announced", "BOOLEAN"),
+        ("pfand_announced_due", "DATE"),
+        ("pfand_announced_notified_at", "TIMESTAMP"),
         ("is_adult_confirmed", "BOOLEAN"),
         ("accepted_no_guarantee", "BOOLEAN"),
     ],
@@ -75,6 +80,8 @@ BACKFILLS = [
     ("helpers", "UPDATE helpers SET discount_offered = 0 WHERE discount_offered IS NULL"),
     ("helpers", "UPDATE helpers SET me_view_count = 0 WHERE me_view_count IS NULL"),
     ("helpers", "UPDATE helpers SET pfand_exempt = 0 WHERE pfand_exempt IS NULL"),
+    # pfand_announced_due bleibt bewusst NULL - "keine Frist gesetzt".
+    ("helpers", "UPDATE helpers SET pfand_announced = 0 WHERE pfand_announced IS NULL"),
     ("helpers", "UPDATE helpers SET is_adult_confirmed = 0 WHERE is_adult_confirmed IS NULL"),
     ("helpers", "UPDATE helpers SET accepted_no_guarantee = 0 WHERE accepted_no_guarantee IS NULL"),
     ("shift_swap_offers", "UPDATE shift_swap_offers SET want_type = 'day' WHERE want_type IS NULL"),

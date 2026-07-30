@@ -12,6 +12,37 @@
   </div>
 </div>
 
+{% if helper.pfand_returned %}
+<div class="mb-6 p-3 rounded-lg border" style="background-color: rgb(255,240,232); border-color: rgb(255,179,137);">
+  <p class="text-sm font-medium" style="color: rgb(140,74,38);">
+    Pfand zurücküberwiesen
+  </p>
+  <p class="text-xs mt-0.5" style="color: rgb(140,74,38); opacity: .8;">
+    {% if helper.pfand_returned_at %}Am {{ helper.pfand_returned_at.strftime('%d.%m.%Y') }} an dich zurückgegangen.{% else %}Dein Pfand ist an dich zurückgegangen.{% endif %}
+  </p>
+</div>
+{% elif helper.pfand_paid %}
+<div class="mb-6 p-3 rounded-lg bg-emerald-50 border border-emerald-200">
+  <p class="text-sm font-medium text-emerald-800">Pfand erhalten</p>
+  <p class="text-xs text-emerald-700/80 mt-0.5">
+    {% if helper.pfand_paid_at %}Bei uns eingegangen am {{ helper.pfand_paid_at.strftime('%d.%m.%Y') }}.{% else %}Dein Pfand ist bei uns eingegangen.{% endif %}
+    Nach dem Festival überweisen wir es zurück.
+  </p>
+</div>
+{% elif helper.pfand_exempt %}
+<div class="mb-6 p-3 rounded-lg bg-sky-50 border border-sky-200">
+  <p class="text-sm font-medium text-sky-900">Für dich fällt kein Pfand an</p>
+  <p class="text-xs text-sky-900/70 mt-0.5">Du musst nichts überweisen.</p>
+</div>
+{% else %}
+<div class="mb-6 p-3 rounded-lg bg-sky-50 border border-sky-200">
+  <p class="text-sm font-medium text-sky-900">Pfand noch offen</p>
+  <p class="text-xs text-sky-900/70 mt-0.5">
+    Sobald dein Pfand bei uns eingegangen ist, siehst du das hier.
+  </p>
+</div>
+{% endif %}
+
 {% if not helper.email_verified_at %}
 <div class="mb-6 p-4 rounded-lg bg-amber-50 border border-amber-300">
   <div class="flex items-start gap-3">

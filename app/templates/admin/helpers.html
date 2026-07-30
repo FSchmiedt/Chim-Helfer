@@ -70,7 +70,8 @@
     <select name="pfand" class="w-full px-2 py-1.5 border border-slate-300 rounded text-sm">
       <option value="">– egal –</option>
       <option value="unpaid" {% if pfand == 'unpaid' %}selected{% endif %}>noch nicht bezahlt</option>
-      <option value="paid" {% if pfand == 'paid' %}selected{% endif %}>bezahlt (noch nicht zurück)</option>
+      <option value="paid" {% if pfand == 'paid' %}selected{% endif %}>bezahlt</option>
+      <option value="paid_or_soon" {% if pfand == 'paid_or_soon' %}selected{% endif %}>bezahlt oder demnächst</option>
       <option value="returned" {% if pfand == 'returned' %}selected{% endif %}>zurückgegeben</option>
     </select>
   </div>
@@ -250,11 +251,14 @@
         </td>
         <td class="px-4 py-2">
           {% if h.pfand_exempt %}
-            <span title="muss kein Pfand zahlen" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold">✓</span>
+            <span title="muss kein Pfand zahlen" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold">✓</span>
           {% elif h.pfand_returned %}
             <span title="Pfand bezahlt und zurückgegeben" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold">✓</span>
           {% elif h.pfand_paid %}
-            <span title="Pfand bezahlt, noch nicht zurück" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-sky-100 text-sky-700 text-xs font-semibold">✓</span>
+            <span title="Pfand bezahlt, noch nicht zurück" class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-700 text-xs font-semibold">✓</span>
+          {% elif h.pfand_announced %}
+            <span title="Zahlung angekündigt{% if h.pfand_announced_due %} bis {{ h.pfand_announced_due.strftime('%d.%m.%Y') }}{% endif %} — Details in den Notizen"
+                  class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">€</span>
           {% else %}
             <span class="text-slate-300 text-xs">–</span>
           {% endif %}
