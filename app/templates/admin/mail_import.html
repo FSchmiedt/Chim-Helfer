@@ -60,6 +60,15 @@
     </div>
   {% endif %}
 
+  {% if warnings %}
+    <div class="rounded-lg bg-amber-50 border border-amber-200 p-4">
+      <p class="font-medium text-amber-900 text-sm">Hinweise (blockieren nicht):</p>
+      <ul class="mt-2 space-y-1 text-sm text-amber-800 list-disc pl-5">
+        {% for w in warnings %}<li>{{ w }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
   {% if rows %}
     <div>
       <h2 class="font-semibold mb-3">

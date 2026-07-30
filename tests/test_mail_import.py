@@ -257,12 +257,20 @@ def test_missing_text_is_reported():
     assert "Text" in result.errors[0]
 
 
-def test_duplicate_address_is_reported():
-    """Zweimal dieselbe Adresse heisst fast immer: Zeile versehentlich kopiert."""
+def test_duplicate_address_warns_but_does_not_block():
+    """Zweimal dieselbe Adresse ist meist ein Versehen - manchmal Absicht
+    (Testdatei). Deshalb Hinweis statt Blockade."""
     content = make_csv([("a@b.de", "B1", "T1"), ("A@B.DE", "B2", "T2")])
     result = parse_csv(content)
-    assert not result.ok
-    assert "mehrfach" in result.errors[-1]
+    assert result.ok, result.errors
+    assert len(result.rows) == 2
+    assert len(result.warnings) == 1
+    assert "mehr als eine Mail" in result.warnings[0]
+
+
+def test_no_warnings_when_addresses_are_unique():
+    content = make_csv([("a@b.de", "B", "T"), ("c@d.de", "B", "T")])
+    assert parse_csv(content).warnings == []
 
 
 def test_good_rows_survive_a_bad_one():

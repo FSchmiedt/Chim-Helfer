@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, case, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models
+from .. import mail_import, models, pfand_promises
 from ..auth import (
     COOKIE_NAME,
     check_credentials,
@@ -191,6 +191,17 @@ def _parse_int_or_none(value: str | None) -> int | None:
         return None
 
 
+def _parse_date_or_none(value: str | None):
+    """<input type="date"> liefert 'YYYY-MM-DD' oder ''. Leer/ungueltig -> None."""
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
 def _ctx(request: Request, **extra) -> dict:
     ctx = {"request": request, "festival_name": settings.FESTIVAL_NAME, "smtp_enabled": settings.smtp_enabled}
     ctx.update(extra)
@@ -208,13 +219,18 @@ def login_page(request: Request):
 
 
 @router.post("/login")
-def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+def login_submit(request: Request, background_tasks: BackgroundTasks,
+                 username: str = Form(...), password: str = Form(...),
+                 db: Session = Depends(get_db)):
     if not check_credentials(username, password):
         return templates.TemplateResponse(
             "admin_login.html",
             _ctx(request, error="Falsche Zugangsdaten."),
             status_code=401,
         )
+    # Ersatz fuer einen Cron-Job: ueberfaellige Pfand-Zusagen melden und
+    # abgelaufene austragen. Idempotent, laeuft nur wenn es etwas zu tun gibt.
+    pfand_promises.run_sweep_safe(db, background_tasks)
     resp = RedirectResponse("/admin", status_code=303)
     resp.set_cookie(
         COOKIE_NAME,
@@ -467,6 +483,7 @@ async def helper_new_submit(request: Request, background_tasks: BackgroundTasks,
 @router.get("/helpers", response_class=HTMLResponse)
 def helpers_list(
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     day_id: str | None = Query(None),
     area_id: str | None = Query(None),
@@ -484,6 +501,11 @@ def helpers_list(
 ):
     if (r := require_admin_redirect(request)):
         return r
+
+    # Ersatz fuer einen Cron-Job (siehe app/pfand_promises.py). Laeuft vor dem
+    # Aufbau der Liste, damit gerade ausgetragene Zusagen sofort ohne gelbe
+    # Markierung erscheinen.
+    pfand_promises.run_sweep_safe(db, background_tasks)
 
     sort = sort if sort in ("changed", "created", "name", "email") else "changed" 
 
@@ -515,6 +537,12 @@ def helpers_list(
         query = query.filter(models.Helper.pfand_paid.is_(False))
     elif pfand == "paid":
         query = query.filter(models.Helper.pfand_paid.is_(True), models.Helper.pfand_returned.is_(False))
+    elif pfand == "paid_or_soon":
+        # Bewusst ohne pfand_exempt: die Befreiten sind fuer die Frage
+        # "kommt das Geld noch?" irrelevant.
+        query = query.filter(
+            or_(models.Helper.pfand_paid.is_(True), models.Helper.pfand_announced.is_(True))
+        )
     elif pfand == "returned":
         query = query.filter(models.Helper.pfand_returned.is_(True))
     if verified == "yes":
@@ -805,6 +833,21 @@ async def _handle_helper_update(helper_id: int, request: Request, db: Session,
         if not new_returned:
             helper.pfand_returned_at = None
         helper.pfand_returned = new_returned
+
+        # Angekuendigte Ueberweisung. Sobald das Geld da ist, ist die Ankuendigung
+        # erledigt - serverseitig erzwungen, damit die gelbe Markierung nicht
+        # neben der gruenen stehen bleibt.
+        new_announced = form.get("pfand_announced") == "on"
+        if new_paid:
+            new_announced = False
+        new_due = _parse_date_or_none(form.get("pfand_announced_due")) if new_announced else None
+        # Meldungs-Merker nur dann loeschen, wenn die Zusage wirklich neu ist
+        # oder eine andere Frist bekommt. Sonst wuerde jedes Speichern im
+        # Pfand-Abschnitt eine zweite Sammelmail ausloesen.
+        if not new_announced or not helper.pfand_announced or new_due != helper.pfand_announced_due:
+            helper.pfand_announced_notified_at = None
+        helper.pfand_announced = new_announced
+        helper.pfand_announced_due = new_due
 
     # --- 75€-Ein-Schicht-Angebot (Admin bietet es manuell an) ---
     discount_msg = None
@@ -1789,6 +1832,104 @@ async def mail_send(request: Request, db: Session = Depends(get_db)):
             flash_success=success,
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Mails aus Tabelle (viele Mails mit je eigenem Text) - app/mail_import.py
+# ---------------------------------------------------------------------------
+def _mail_import_page(request, db, rows=None, errors=None, warnings=None,
+                      csv_content="", message=None, success=None):
+    """Gemeinsamer Seitenaufbau fuer Vorschau und Versand."""
+    return templates.TemplateResponse(
+        "admin/mail_import.html",
+        _ctx(
+            request,
+            rows=rows or [],
+            errors=errors or [],
+            warnings=warnings or [],
+            csv_content=csv_content,
+            message=message,
+            success=success,
+            test_address=settings.SMTP_FROM_ADDRESS,
+        ),
+    )
+
+
+@router.get("/mail/import", response_class=HTMLResponse)
+def mail_import_page(request: Request, db: Session = Depends(get_db)):
+    if (r := require_admin_redirect(request)):
+        return r
+    return _mail_import_page(request, db)
+
+
+@router.post("/mail/import/preview", response_class=HTMLResponse)
+async def mail_import_preview(request: Request, db: Session = Depends(get_db)):
+    """CSV hochladen und anzeigen, was rausgehen wuerde. Sendet nichts."""
+    if (r := require_admin_redirect(request)):
+        return r
+
+    form = await request.form()
+    upload = form.get("csv_file")
+    if upload is None or not getattr(upload, "filename", ""):
+        return _mail_import_page(request, db, errors=["Keine Datei ausgewählt."])
+
+    raw = await upload.read()
+    try:
+        content = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        # Excel unter Windows schreibt gern cp1252 statt UTF-8.
+        try:
+            content = raw.decode("cp1252")
+        except UnicodeDecodeError:
+            return _mail_import_page(request, db, errors=[
+                "Die Datei ist weder UTF-8 noch Windows-1252. "
+                "Bitte in Excel als „CSV UTF-8“ speichern."
+            ])
+
+    result = mail_import.parse_csv(content)
+    return _mail_import_page(request, db, rows=result.rows, errors=result.errors,
+                             warnings=result.warnings, csv_content=content)
+
+
+@router.post("/mail/import/send")
+async def mail_import_send(request: Request, db: Session = Depends(get_db)):
+    """Verschickt die zuvor gepruefte Datei. Testlauf geht nur an den Admin."""
+    if (r := require_admin_redirect(request)):
+        return r
+    from ..email_sender import send_mail
+
+    form = await request.form()
+    content = form.get("csv_content") or ""
+    test_only = form.get("test_only") == "on"
+
+    result = mail_import.parse_csv(content)
+    if not result.ok:
+        return _mail_import_page(request, db, rows=result.rows, errors=result.errors,
+                                 warnings=result.warnings, csv_content=content)
+
+    def sender(to, subject, text, html):
+        # bcc=False: bei zwei Adressen in einer Zeile sollen beide im To-Feld
+        # stehen - das ist dieselbe Person mit zwei Konten.
+        # PRUEFEN: nimmt send_mail in email_sender.py ein html-Argument? Wenn
+        # ja, hier html=html ergaenzen. Wenn nein, bleibt es reiner Text.
+        send_mail(to, subject, text, bcc=False)
+
+    outcome = mail_import.send_rows(
+        result.rows, sender,
+        test_address=(settings.SMTP_FROM_ADDRESS if test_only else None),
+    )
+
+    if outcome["failed"]:
+        lines = "\n".join(f"  • {who}: {why}" for who, why in outcome["failed"])
+        message = (f"{outcome['sent']} Mail(s) versendet, "
+                   f"{len(outcome['failed'])} fehlgeschlagen:\n{lines}")
+        success = "partial"
+    else:
+        prefix = "Testlauf: " if test_only else ""
+        message = f"{prefix}{outcome['sent']} Mail(s) versendet."
+        success = True
+
+    return _mail_import_page(request, db, message=message, success=success)
 
 
 # ---------------------------------------------------------------------------

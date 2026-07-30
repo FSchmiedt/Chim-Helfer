@@ -74,9 +74,13 @@ class MailRow:
 class ParseResult:
     rows: list[MailRow] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
+        # Warnungen blockieren nicht. Eine doppelte Adresse ist meist ein
+        # versehentlich kopierter Eintrag, manchmal aber Absicht (Testdatei,
+        # zwei verschiedene Anliegen an dieselbe Person).
         return not self.errors
 
 
@@ -244,7 +248,9 @@ def parse_csv(content: str) -> ParseResult:
         for addr in recipients:
             key = addr.lower()
             if key in seen:
-                problems.append(f"„{addr}“ kommt mehrfach vor")
+                result.warnings.append(
+                    f"Zeile {line_no}: „{addr}“ bekommt mehr als eine Mail."
+                )
             seen.add(key)
 
         if problems:
