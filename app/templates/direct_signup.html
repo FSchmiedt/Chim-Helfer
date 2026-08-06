@@ -1,0 +1,373 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{% if preview %}
+<div class="mb-6 p-3 rounded-lg bg-indigo-50 border border-indigo-300 text-indigo-900 text-sm">
+  <strong>Vorschau (interner Testzugang).</strong> So sehen und durchlaufen
+  Interessierte den Direkt-Flow. Du kannst hier alles durchklicken und auch
+  absenden — dabei entsteht eine <em>echte</em> Test-Anmeldung, die du danach
+  im Admin wieder löschen solltest.
+</div>
+{% endif %}
+
+<div class="mb-4 text-sm text-slate-600">
+  Schon dabei?
+  <a href="/login" class="text-primary-600 hover:underline font-medium">Hier einloggen</a>.
+</div>
+
+{% if errors %}
+<div class="mb-6 p-4 rounded-md bg-red-50 border border-red-200 text-red-800">
+  <p class="font-semibold mb-1">Bitte prüfe deine Angaben.</p>
+  <ul class="list-disc ml-5 text-sm space-y-0.5">
+    {% for msg in errors %}<li>{{ msg }}</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<form method="post" action="/mitmachen" id="direct-form" novalidate>
+  {% if preview %}<input type="hidden" name="preview_token" value="{{ preview_token }}" />{% endif %}
+
+  <!-- Fortschritts-Anzeige -->
+  <ol class="flex items-center gap-2 mb-6 text-xs" id="step-indicator">
+    <li data-dot="1" class="flex items-center gap-2">
+      <span class="dot w-6 h-6 rounded-full flex items-center justify-center font-semibold">1</span>
+      <span class="hidden sm:inline">Schicht</span>
+    </li>
+    <li class="flex-1 h-px bg-slate-300"></li>
+    <li data-dot="2" class="flex items-center gap-2">
+      <span class="dot w-6 h-6 rounded-full flex items-center justify-center font-semibold">2</span>
+      <span class="hidden sm:inline">Kontakt</span>
+    </li>
+    <li class="flex-1 h-px bg-slate-300"></li>
+    <li data-dot="3" class="flex items-center gap-2">
+      <span class="dot w-6 h-6 rounded-full flex items-center justify-center font-semibold">3</span>
+      <span class="hidden sm:inline">Kaution</span>
+    </li>
+  </ol>
+
+  <!-- ================= SCHRITT 1: Schichten ================= -->
+  <div data-step="1" class="step">
+    <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-4">
+      <h2 class="text-xl font-semibold mb-2">Such dir deine Schicht aus</h2>
+      <p class="text-sm text-slate-600 mb-4">
+        Für ein kostenloses Volunteer-Ticket übernimmst du <strong>zwei Schichten</strong>.
+        Du kannst auch <strong>nur eine Schicht</strong> machen und dafür
+        <strong>{{ one_shift_price }} €</strong> fürs Ticket zahlen.
+      </p>
+
+      <label class="flex items-start gap-3 p-3 rounded-lg bg-cream-50 border border-slate-200 mb-2">
+        <input type="checkbox" name="only_one_shift" id="only-one"
+               {% if form_data.only_one_shift %}checked{% endif %}
+               class="mt-0.5 rounded text-primary-600 focus:ring-primary-600" />
+        <span class="text-sm">
+          <strong>Ich möchte nur eine Schicht machen</strong> und zahle dafür {{ one_shift_price }} € fürs Ticket.
+          <span class="block text-xs text-slate-500 mt-0.5">
+            Ohne Haken kannst du bis zu zwei Schichten wählen (Ticket kostenlos).
+          </span>
+        </span>
+      </label>
+
+      <p id="pick-hint" class="text-xs text-slate-500 mb-2">
+        Ausgewählt: <span id="pick-count" class="font-semibold">0</span> /
+        <span id="pick-max">2</span>
+      </p>
+    </section>
+
+    {% if total_open == 0 %}
+      <div class="bg-white border border-dashed border-slate-300 rounded-lg p-6 text-center text-sm text-slate-500">
+        Gerade sind keine offenen Schichten verfügbar. Bitte schau später noch einmal vorbei.
+      </div>
+    {% else %}
+      {% for block in blocks %}
+      <section class="mb-6">
+        <h3 class="font-semibold text-lg mb-3">
+          {{ block.day.label }}
+          <span class="text-sm text-slate-500 font-normal">· {{ block.day.date.strftime('%d.%m.%Y') }}</span>
+        </h3>
+        {% for ab in block.areas %}
+        <div class="mb-4">
+          <h4 class="font-medium text-sm text-slate-700 mb-2">{{ ab.area.name }}</h4>
+          {% if ab.is_bar and bar_hint %}
+          <p class="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2 inline-block">
+            ⚠️ {{ bar_hint }}
+          </p>
+          {% endif %}
+          <ul class="space-y-2">
+            {% for si in ab.shifts %}
+            {% set s = si.shift %}
+            {% set checked = s.id in (form_data.shift_ids or []) %}
+            <li>
+              <label class="shift-option flex items-center justify-between gap-3 bg-white border rounded-lg p-3 cursor-pointer transition
+                            {% if checked %}border-primary-600 bg-primary-600/5{% else %}border-slate-200 hover:bg-slate-50{% endif %}">
+                <span class="flex items-center gap-3">
+                  <input type="checkbox" name="shift_ids" value="{{ s.id }}"
+                         data-bar="{{ '1' if ab.is_bar else '0' }}"
+                         {% if checked %}checked{% endif %}
+                         class="shift-check rounded text-primary-600 focus:ring-primary-600" />
+                  <span>
+                    <span class="font-medium text-sm">{{ s.time_range }}{% if s.label %} · {{ s.label }}{% endif %}</span>
+                    <span class="block text-xs text-slate-500">{{ si.free }} Platz{{ 'e' if si.free != 1 else '' }} frei</span>
+                  </span>
+                </span>
+              </label>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endfor %}
+      </section>
+      {% endfor %}
+    {% endif %}
+
+    {% if total_open > 0 %}
+    <div class="flex justify-end mt-4">
+      <button type="button" data-next="2"
+              class="bg-primary-600 hover:bg-primary-700 text-white font-medium px-6 py-3 rounded-md shadow-sm transition">
+        Weiter →
+      </button>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ================= SCHRITT 2: Kontakt ================= -->
+  <div data-step="2" class="step" hidden>
+    <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-4">
+      <h2 class="text-xl font-semibold mb-4">Wie erreichen wir dich?</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">Vorname *</label>
+          <input type="text" name="first_name" value="{{ form_data.first_name or '' }}"
+                 class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Nachname *</label>
+          <input type="text" name="last_name" value="{{ form_data.last_name or '' }}"
+                 class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">E-Mail *</label>
+          <input type="email" name="email" value="{{ form_data.email or '' }}"
+                 class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Handynummer</label>
+          <input type="tel" name="phone" value="{{ form_data.phone or '' }}"
+                 placeholder="für WhatsApp / Telegram"
+                 class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+          <p class="text-xs text-slate-500 mt-1">Optional. Falls du dort besser erreichbar bist als per E-Mail.</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Geburtsdatum *</label>
+          <input type="date" name="date_of_birth" value="{{ form_data.date_of_birth or '' }}"
+                 class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+        </div>
+      </div>
+    </section>
+
+    <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-4">
+      <h2 class="text-lg font-semibold mb-2">Passwort</h2>
+      <p class="text-sm text-slate-600 mb-3">
+        Wir haben dir schon ein Passwort vorgeschlagen — du kannst es so lassen,
+        ein eigenes wählen, oder das Feld leer lassen. Es muss nicht besonders
+        sicher sein: unter „Mein Bereich“ stehen praktisch keine sensiblen Daten.
+      </p>
+      <div class="flex items-center gap-2 max-w-sm">
+        <input type="text" name="password" id="password-field"
+               value="{{ form_data.password or suggested_password }}"
+               class="flex-1 rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border font-mono text-sm" />
+        <button type="button" id="pw-clear"
+                class="text-xs text-slate-500 hover:text-slate-800 whitespace-nowrap px-2 py-1">
+          leer lassen
+        </button>
+      </div>
+    </section>
+
+    <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-4">
+      <label class="flex items-start gap-3">
+        <input type="checkbox" name="is_adult_confirmed"
+               {% if form_data.is_adult_confirmed %}checked{% endif %}
+               class="mt-1 rounded text-primary-600 focus:ring-primary-600" />
+        <span class="text-sm">Ich bestätige, dass ich <strong>mindestens 18 Jahre alt</strong> bin.</span>
+      </label>
+    </section>
+
+    <div class="flex justify-between mt-4">
+      <button type="button" data-prev="1"
+              class="text-slate-600 hover:text-black font-medium px-4 py-3">← Zurück</button>
+      <button type="button" data-next="3"
+              class="bg-primary-600 hover:bg-primary-700 text-white font-medium px-6 py-3 rounded-md shadow-sm transition">
+        Weiter →
+      </button>
+    </div>
+  </div>
+
+  <!-- ================= SCHRITT 3: Kaution ================= -->
+  <div data-step="3" class="step" hidden>
+    <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-4">
+      <h2 class="text-xl font-semibold mb-2">Kaution</h2>
+      <p class="text-sm text-slate-600 mb-4">
+        Damit alle Schichten zuverlässig besetzt sind, arbeiten wir mit einer
+        Kaution von <strong>{{ deposit_amount }} €</strong>. Die bekommst du nach
+        dem Festival vollständig zurück, wenn deine Schichten erledigt sind.
+      </p>
+
+      <div class="space-y-2">
+        <label class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer hover:bg-slate-50">
+          <input type="radio" name="deposit_ok" value="yes"
+                 {% if form_data.deposit_ok == 'yes' %}checked{% endif %}
+                 class="mt-0.5 text-primary-600 focus:ring-primary-600 deposit-radio" />
+          <span class="text-sm">Ja, ich kann die {{ deposit_amount }} € Kaution zahlen.</span>
+        </label>
+        <label class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer hover:bg-slate-50">
+          <input type="radio" name="deposit_ok" value="no"
+                 {% if form_data.deposit_ok == 'no' %}checked{% endif %}
+                 class="mt-0.5 text-primary-600 focus:ring-primary-600 deposit-radio" />
+          <span class="text-sm">Das ist gerade schwierig für mich.</span>
+        </label>
+      </div>
+
+      <div id="deposit-alt-wrap" class="mt-3" {% if form_data.deposit_ok != 'no' %}hidden{% endif %}>
+        <label class="block text-sm font-medium mb-1">Was könntest du als Kaution zahlen?</label>
+        <input type="text" name="deposit_alternative" value="{{ form_data.deposit_alternative or '' }}"
+               placeholder="z.B. 80 € — wir finden gemeinsam eine Lösung"
+               class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+        <p class="text-xs text-slate-500 mt-1">
+          Kein Problem, das kriegen wir hin. Schreib einfach rein, was für dich machbar ist.
+        </p>
+      </div>
+    </section>
+
+    <div class="flex justify-between mt-4">
+      <button type="button" data-prev="2"
+              class="text-slate-600 hover:text-black font-medium px-4 py-3">← Zurück</button>
+      <button type="submit"
+              class="bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-6 py-3 rounded-md shadow-sm transition">
+        Anmeldung abschließen
+      </button>
+    </div>
+  </div>
+
+</form>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const form = document.getElementById('direct-form');
+  if (!form) return;
+
+  const steps = Array.from(form.querySelectorAll('.step'));
+  const maxPickEl = document.getElementById('pick-max');
+  const countEl = document.getElementById('pick-count');
+  const onlyOne = document.getElementById('only-one');
+  const checks = Array.from(form.querySelectorAll('.shift-check'));
+
+  // --- Schrittsteuerung ---
+  function showStep(n) {
+    steps.forEach(s => { s.hidden = (s.dataset.step !== String(n)); });
+    // Fortschritts-Punkte einfärben
+    form.querySelectorAll('#step-indicator [data-dot]').forEach(li => {
+      const dot = li.querySelector('.dot');
+      const i = Number(li.dataset.dot);
+      dot.className = 'dot w-6 h-6 rounded-full flex items-center justify-center font-semibold ' +
+        (i < n ? 'bg-emerald-600 text-white'
+               : i === n ? 'bg-primary-600 text-white'
+                         : 'bg-slate-200 text-slate-500');
+    });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // --- Auswahl-Limit (1 oder 2) ---
+  function maxPicks() { return onlyOne && onlyOne.checked ? 1 : 2; }
+
+  function selectedChecks() { return checks.filter(c => c.checked); }
+
+  function refreshCount() {
+    const sel = selectedChecks();
+    if (countEl) countEl.textContent = String(sel.length);
+    if (maxPickEl) maxPickEl.textContent = String(maxPicks());
+    // Karten-Styling nachziehen
+    checks.forEach(c => {
+      const label = c.closest('.shift-option');
+      if (!label) return;
+      if (c.checked) {
+        label.classList.add('border-primary-600', 'bg-primary-600/5');
+        label.classList.remove('border-slate-200');
+      } else {
+        label.classList.remove('border-primary-600', 'bg-primary-600/5');
+        label.classList.add('border-slate-200');
+      }
+    });
+  }
+
+  function enforceLimit(justChecked) {
+    const sel = selectedChecks();
+    const max = maxPicks();
+    if (sel.length > max) {
+      // Ältere Auswahl abwählen, die zuletzt geklickte behalten.
+      for (const c of sel) {
+        if (c !== justChecked) { c.checked = false; break; }
+      }
+    }
+    refreshCount();
+  }
+
+  checks.forEach(c => c.addEventListener('change', () => enforceLimit(c)));
+  if (onlyOne) onlyOne.addEventListener('change', () => {
+    // Beim Umschalten auf "nur eine" ggf. auf 1 reduzieren.
+    const sel = selectedChecks();
+    if (onlyOne.checked && sel.length > 1) {
+      sel.slice(1).forEach(c => { c.checked = false; });
+    }
+    refreshCount();
+  });
+
+  // --- Weiter/Zurück-Buttons mit Mini-Validierung ---
+  form.addEventListener('click', function (e) {
+    const nextBtn = e.target.closest('[data-next]');
+    const prevBtn = e.target.closest('[data-prev]');
+    if (nextBtn) {
+      const target = Number(nextBtn.dataset.next);
+      if (target === 2 && selectedChecks().length < 1) {
+        alert('Bitte wähle mindestens eine Schicht aus.');
+        return;
+      }
+      if (target === 3) {
+        // Schritt-2-Pflichtfelder grob prüfen
+        const req = ['first_name', 'last_name', 'email', 'date_of_birth'];
+        for (const name of req) {
+          const el = form.querySelector('[name="' + name + '"]');
+          if (el && !el.value.trim()) { el.focus(); alert('Bitte fülle alle Pflichtfelder (*) aus.'); return; }
+        }
+        const adult = form.querySelector('[name="is_adult_confirmed"]');
+        if (adult && !adult.checked) { alert('Bitte bestätige, dass du volljährig bist.'); return; }
+      }
+      showStep(target);
+    }
+    if (prevBtn) showStep(Number(prevBtn.dataset.prev));
+  });
+
+  // --- Passwort "leer lassen" ---
+  const pwClear = document.getElementById('pw-clear');
+  const pwField = document.getElementById('password-field');
+  if (pwClear && pwField) {
+    pwClear.addEventListener('click', () => { pwField.value = ''; pwField.focus(); });
+  }
+
+  // --- Kautions-Alternative ein/ausblenden ---
+  const altWrap = document.getElementById('deposit-alt-wrap');
+  form.querySelectorAll('.deposit-radio').forEach(r => {
+    r.addEventListener('change', () => {
+      if (altWrap) altWrap.hidden = (form.querySelector('[name="deposit_ok"]:checked')?.value !== 'no');
+    });
+  });
+
+  // --- Start ---
+  refreshCount();
+  // Bei Server-Fehlern (errors gesetzt) auf Schritt 1 bleiben, damit man alles sieht.
+  showStep(1);
+})();
+</script>
+{% endblock %}

@@ -174,6 +174,13 @@ def _is_valid_paypal(value: str) -> bool:
 # ---------------------------------------------------------------------------
 @router.get("/", response_class=HTMLResponse)
 def register_form(request: Request, db: Session = Depends(get_db)):
+    # Direkt-Flow hat Vorrang: ist er offen (manuell oder zeitgesteuert), zeigt
+    # "/" die Schicht-zuerst-Anmeldung statt des klassischen Formulars. Es geht
+    # immer nur eine Eintragungsart live.
+    if settings.direct_signup_effective_open:
+        from .direct_signup import render_direct_page
+        return render_direct_page(request, db)
+
     if not settings.REGISTRATION_OPEN:
         return templates.TemplateResponse(
             "registration_closed.html",

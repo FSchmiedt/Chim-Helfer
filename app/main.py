@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .database import Base, engine
-from .routers import admin_pages, helper_area, public
+from .routers import admin_pages, direct_signup, helper_area, public
 
 
 def create_app() -> FastAPI:
@@ -17,6 +17,7 @@ def create_app() -> FastAPI:
 
     app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
+    app.include_router(direct_signup.router)
     app.include_router(public.router)
     app.include_router(helper_area.router)
     app.include_router(admin_pages.router)

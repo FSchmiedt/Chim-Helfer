@@ -42,6 +42,32 @@ class Settings(BaseSettings):
     # Beispiel: "test@example.org, orga@example.org"
     SHIFT_SIGNUP_PREVIEW_EMAILS: str = ""
 
+    # -----------------------------------------------------------------------
+    # Direkt-Anmeldung (Schicht-zuerst-Flow auf "/")
+    # -----------------------------------------------------------------------
+    # Ein bewusst eigener Schalter, GETRENNT von REGISTRATION_OPEN und
+    # SHIFT_SIGNUP_OPEN. Ist er an, zeigt "/" den neuen dreistufigen Flow:
+    # 1. offene Schicht(en) direkt auswählen (1 oder 2), 2. Name/Email/Handy,
+    # 3. Kautions-Frage -> danach automatisch eingeloggt auf /me.
+    # Es geht immer nur EINE Eintragungsart live: ist DIRECT_SIGNUP_OPEN (bzw.
+    # die Zeitsteuerung) aktiv, hat der Direkt-Flow auf "/" Vorrang vor dem
+    # klassischen Anmeldeformular.
+    DIRECT_SIGNUP_OPEN: bool = False
+    # Optional: Zeitgesteuerte Freischaltung. ISO-8601-Zeitpunkt mit Zeitzone,
+    # z.B. "2026-08-07T16:00:00+02:00" (Berlin Sommerzeit). Ab dann ist der
+    # Direkt-Flow automatisch offen. DIRECT_SIGNUP_OPEN=true überschreibt das.
+    DIRECT_SIGNUP_OPEN_AT: str = ""
+    # Geheimes Token für die interne Vorschau (/vorschau?key=...). Damit sieht
+    # das Orga-Team den kompletten Flow und kann ihn durchklicken, BEVOR er
+    # offiziell freigeschaltet ist. Leer = Vorschau deaktiviert.
+    DIRECT_SIGNUP_PREVIEW_TOKEN: str = ""
+    # Hinweistext, der bei Bar-Schichten im Direkt-Flow eingeblendet wird.
+    DIRECT_SIGNUP_BAR_HINT: str = "Bitte nur mit Bar-Erfahrung eintragen."
+    # Kautionshöhe (Anzeige) für den letzten Schritt des Direkt-Flows.
+    DEPOSIT_AMOUNT_EUR: int = 160
+    # Preis für das Ein-Schicht-Ticket (Anzeige).
+    ONE_SHIFT_PRICE_EUR: int = 75
+
     # Bereiche, die vom Tausch-Board ausgeschlossen sind (Komma-getrennt).
     # Diese Schichten kann man nicht aufs Board stellen; Tausch macht der Admin
     # manuell. Default: Bar.
@@ -103,7 +129,15 @@ class Settings(BaseSettings):
 
     def _parse_signup_open_at(self):
         """Parst SHIFT_SIGNUP_OPEN_AT zu einem tz-aware datetime, oder None."""
-        raw = (self.SHIFT_SIGNUP_OPEN_AT or "").strip()
+        return self._parse_iso_datetime(self.SHIFT_SIGNUP_OPEN_AT)
+
+    @staticmethod
+    def _parse_iso_datetime(raw: str):
+        """Parst einen ISO-8601-String zu einem tz-aware datetime, oder None.
+
+        Ohne Zeitzone wird defensiv als UTC interpretiert.
+        """
+        raw = (raw or "").strip()
         if not raw:
             return None
         from datetime import datetime, timezone
@@ -111,10 +145,28 @@ class Settings(BaseSettings):
             dt = datetime.fromisoformat(raw)
         except ValueError:
             return None
-        # Falls ohne Zeitzone angegeben, als UTC interpretieren (defensiv).
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
+
+    @property
+    def direct_signup_effective_open(self) -> bool:
+        """Ist der Direkt-Flow gerade offen?
+
+        True, wenn der manuelle Schalter an ist ODER die zeitgesteuerte
+        Freischaltung (DIRECT_SIGNUP_OPEN_AT) erreicht/überschritten ist.
+        """
+        if self.DIRECT_SIGNUP_OPEN:
+            return True
+        opens_at = self._parse_direct_signup_open_at()
+        if opens_at is None:
+            return False
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc) >= opens_at
+
+    def _parse_direct_signup_open_at(self):
+        """Parst DIRECT_SIGNUP_OPEN_AT zu einem tz-aware datetime, oder None."""
+        return self._parse_iso_datetime(self.DIRECT_SIGNUP_OPEN_AT)
 
     @property
     def shift_signup_preview_emails(self) -> set[str]:

@@ -37,6 +37,19 @@ services:
         sync: false  # optional: ISO-Zeitpunkt für automatische Freischaltung, z.B. 2026-07-10T14:00:00+02:00
       - key: SHIFT_SIGNUP_PREVIEW_EMAILS
         sync: false  # optional: Test-Nutzer (Komma-getrennt), sehen Schichten vor Freischaltung
+      # --- Direkt-Anmeldung (Schicht-zuerst-Flow auf "/") ---
+      # Eigener Schalter, getrennt von REGISTRATION_OPEN. Ist er an, zeigt "/"
+      # den dreistufigen Direkt-Flow (Schicht wählen -> Kontakt -> Kaution).
+      - key: DIRECT_SIGNUP_OPEN
+        sync: false  # true/false im Dashboard; wird bei Deploys NICHT überschrieben
+      - key: DIRECT_SIGNUP_OPEN_AT
+        sync: false  # optional: ISO-Zeitpunkt für automatische Freischaltung, z.B. 2026-08-07T16:00:00+02:00
+      - key: DIRECT_SIGNUP_PREVIEW_TOKEN
+        sync: false  # geheimes Token für die interne Vorschau: /vorschau?key=<TOKEN>
+      - key: DEPOSIT_AMOUNT_EUR
+        value: "160"  # angezeigte Kautionshöhe im letzten Schritt
+      - key: ONE_SHIFT_PRICE_EUR
+        value: "75"   # angezeigter Preis fürs Ein-Schicht-Ticket
       - key: SWAP_EXCLUDED_AREAS
         value: "Bar"  # Bereiche ohne Self-Service-Tausch (Komma-getrennt); Tausch läuft dort über Admin
       - key: MIN_SHIFTS
