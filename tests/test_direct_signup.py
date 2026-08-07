@@ -428,10 +428,22 @@ def test_one_shift_ticket_may_not_skip_deposit(client, session_local, direct_ope
 def test_index_has_login_box_and_heading(client, session_local, direct_open):
     r = client.get("/")
     assert "Hier einloggen" in r.text
-    assert "Noch offene Schichten" in r.text
+    assert "Registrierung für noch offene Schichten" in r.text
 
 
 def test_phone_hint_wording(client, session_local, direct_open):
     r = client.get("/")
     assert "Hilfreich, wenn du über Handy" in r.text
     assert "Optional. Falls du dort" not in r.text
+
+
+def test_hidden_toggles_do_not_rely_on_hidden_attribute_alone(client, session_local, direct_open):
+    """Regression: die Option "geht gar nicht" traegt die Tailwind-Klasse flex.
+
+    display:flex schlaegt [hidden]{display:none} - ein reines el.hidden = true
+    blendet sie also NICHT aus. Sie blieb sichtbar und klickbar, waehrend das
+    Skript die Auswahl sofort zuruecknahm ("Klick tut nichts"). Deshalb muss
+    zusaetzlich der Inline-Style gesetzt werden.
+    """
+    r = client.get("/")
+    assert "style.display" in r.text

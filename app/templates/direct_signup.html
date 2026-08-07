@@ -23,7 +23,9 @@
   </a>
 </div>
 
-<h1 class="text-2xl font-semibold mb-4">Noch offene Schichten</h1>
+<div class="mb-6 bg-white rounded-lg shadow-sm border border-slate-200 p-4">
+  <h1 class="text-2xl font-semibold">Registrierung für noch offene Schichten</h1>
+</div>
 
 {% if errors %}
 <div class="mb-6 p-4 rounded-md bg-red-50 border border-red-200 text-red-800">
@@ -437,15 +439,30 @@
   const altWrap  = document.getElementById('deposit-alt-wrap');
   const noOption = document.getElementById('deposit-no-option');
 
+  // Nicht ueber das hidden-ATTRIBUT aus- und einblenden: die Elemente tragen
+  // Tailwind-Klassen wie "flex", und display:flex schlaegt [hidden]{display:none}.
+  // Das Feld blieb dadurch sichtbar und anklickbar, waehrend syncDeposit die
+  // Auswahl sofort wieder zuruecknahm - es "passierte" also scheinbar nichts.
+  // Inline-Style gewinnt gegen jede Klasse und ist hier die sichere Variante.
+  function setVisible(el, visible, displayValue) {
+    if (!el) return;
+    // Das serverseitig gesetzte hidden-Attribut muss beim Einblenden mit weg,
+    // sonst bleibt das Element trotz display-Wert unsichtbar.
+    el.hidden = !visible;
+    el.style.display = visible ? (displayValue || '') : 'none';
+  }
+
   function syncDeposit() {
     // Beim 75-Euro-Ticket ist "geht gar nicht" keine Option: das Ticket IST
     // schon der verguenstigte Weg. Also ausblenden UND eine evtl. vorher
     // gesetzte Auswahl zuruecknehmen, damit nichts Unsichtbares abgeschickt wird.
     const wantsOne = onlyOne && onlyOne.checked;
-    if (noOption) noOption.hidden = !!wantsOne;
     const noRadio = form.querySelector('[name="deposit_ok"][value="no"]');
     if (wantsOne && noRadio && noRadio.checked) noRadio.checked = false;
-    if (altWrap) altWrap.hidden = (form.querySelector('[name="deposit_ok"]:checked')?.value !== 'no');
+    setVisible(noOption, !wantsOne, 'flex');
+
+    const picked = form.querySelector('[name="deposit_ok"]:checked')?.value;
+    setVisible(altWrap, picked === 'no');
   }
 
   form.querySelectorAll('.deposit-radio').forEach(r => r.addEventListener('change', syncDeposit));
