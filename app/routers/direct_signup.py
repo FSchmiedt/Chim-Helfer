@@ -22,7 +22,7 @@ hier `render_direct_page(...)` auf, wenn der Direkt-Flow offen ist.
 from __future__ import annotations
 
 import secrets
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
@@ -66,9 +66,41 @@ def suggest_password() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Reservierungen ("Holds") — Kinoticket-Prinzip
+# ---------------------------------------------------------------------------
+def new_hold_token() -> str:
+    """Anonymer Token pro Formular-Ladevorgang."""
+    return secrets.token_urlsafe(24)
+
+
+def cleanup_expired_holds(db: Session) -> None:
+    """Abgelaufene Reservierungen entfernen (lazy, ohne Cronjob)."""
+    db.query(models.ShiftHold).filter(
+        models.ShiftHold.expires_at < datetime.utcnow()
+    ).delete(synchronize_session=False)
+
+
+def active_holds_by_shift(db: Session, exclude_token: Optional[str] = None) -> dict[int, int]:
+    """Anzahl aktiver (nicht abgelaufener) fremder Reservierungen je Schicht.
+
+    `exclude_token` blendet die eigenen Holds aus, damit man die von sich selbst
+    gehaltene Schicht in der Liste nicht als "belegt" sieht.
+    """
+    q = db.query(models.ShiftHold).filter(
+        models.ShiftHold.expires_at >= datetime.utcnow()
+    )
+    if exclude_token:
+        q = q.filter(models.ShiftHold.token != exclude_token)
+    counts: dict[int, int] = {}
+    for h in q.all():
+        counts[h.shift_id] = counts.get(h.shift_id, 0) + 1
+    return counts
+
+
+# ---------------------------------------------------------------------------
 # Offene Schichten laden + gruppieren
 # ---------------------------------------------------------------------------
-def _load_open_shifts(db: Session):
+def _load_open_shifts(db: Session, viewer_token: Optional[str] = None):
     """Liefert alle Schichten aus ALLEN Bereichen, die noch freie Plätze haben,
     gruppiert nach Tag -> Bereich, in stabiler Reihenfolge.
 
@@ -86,12 +118,16 @@ def _load_open_shifts(db: Session):
         .all()
     )
 
-    # nur Schichten mit freier Kapazität
+    # Abgelaufene Reservierungen wegräumen, dann aktive fremde Holds zählen.
+    cleanup_expired_holds(db)
+    held = active_holds_by_shift(db, exclude_token=viewer_token)
+
+    # nur Schichten mit tatsächlich freier Kapazität (Belegung + fremde Holds)
     open_shifts = []
     for s in shifts:
-        n_assigned = len(s.assignments)
-        if n_assigned < s.capacity:
-            open_shifts.append((s, n_assigned))
+        n_taken = len(s.assignments) + held.get(s.id, 0)
+        if n_taken < s.capacity:
+            open_shifts.append((s, n_taken))
 
     # Tage in Sortier-Reihenfolge
     days = (
@@ -145,9 +181,13 @@ def render_direct_page(
     preview_token: Optional[str] = None,
     errors: Optional[list[str]] = None,
     form_data: Optional[dict] = None,
+    hold_token: Optional[str] = None,
     status_code: int = 200,
 ) -> HTMLResponse:
-    blocks = _load_open_shifts(db)
+    # Token für Reservierungen: bei Fehler-Neuanzeige den bestehenden behalten,
+    # sonst einen frischen erzeugen (die Person hat dann noch keine Holds).
+    hold_token = hold_token or (form_data or {}).get("hold_token") or new_hold_token()
+    blocks = _load_open_shifts(db, viewer_token=hold_token)
     total_open = sum(
         len(a["shifts"]) for b in blocks for a in b["areas"]
     )
@@ -162,6 +202,7 @@ def render_direct_page(
             "preview_token": preview_token or "",
             "errors": errors,
             "form_data": form_data or {},
+            "hold_token": hold_token,
             "suggested_password": (form_data or {}).get("password") or suggest_password(),
             "deposit_amount": settings.DEPOSIT_AMOUNT_EUR,
             "one_shift_price": settings.ONE_SHIFT_PRICE_EUR,
@@ -186,6 +227,104 @@ def direct_preview(request: Request, db: Session = Depends(get_db)):
             status_code=404,
         )
     return render_direct_page(request, db, preview=True, preview_token=token)
+
+
+# ---------------------------------------------------------------------------
+# Reservierung setzen: /mitmachen/hold (JSON, aus dem Frontend beim Schritt 1->2)
+# ---------------------------------------------------------------------------
+@router.post("/mitmachen/hold")
+async def direct_hold(request: Request, db: Session = Depends(get_db)):
+    """Reserviert die gewählten Schichten für einen Formular-Token.
+
+    Wird per fetch() aufgerufen, wenn die Person von Schritt 1 (Schicht wählen)
+    zu Schritt 2 (Kontakt) weitergeht. Antwortet mit JSON:
+      { "ok": true }                      -> alle Wünsche reserviert, weiter
+      { "ok": false, "unavailable": [ {id, label}, ... ] }
+                                          -> mind. eine ist weg, Person bleibt
+
+    Setzt den Hold-Zustand für den Token auf GENAU die aktuell gewählten
+    Schichten (frühere Holds desselben Tokens für andere Schichten werden
+    freigegeben — z.B. wenn jemand zurückgeht und die Auswahl ändert).
+    """
+    from fastapi.responses import JSONResponse
+
+    # Zugang wie beim finalen Absenden: offen ODER gültige Vorschau.
+    form = await request.form()
+    submitted_token = (form.get("preview_token") or "").strip()
+    cfg_token = (settings.DIRECT_SIGNUP_PREVIEW_TOKEN or "").strip()
+    is_preview = bool(cfg_token) and bool(submitted_token) and secrets.compare_digest(submitted_token, cfg_token)
+    if not settings.direct_signup_effective_open and not is_preview:
+        return JSONResponse({"ok": False, "error": "closed"}, status_code=403)
+
+    hold_token = (form.get("hold_token") or "").strip()
+    if not hold_token:
+        return JSONResponse({"ok": False, "error": "no_token"}, status_code=400)
+
+    try:
+        wanted_ids = list(dict.fromkeys(int(x) for x in form.getlist("shift_ids")))
+    except ValueError:
+        wanted_ids = []
+    if not wanted_ids:
+        return JSONResponse({"ok": False, "error": "empty"}, status_code=400)
+
+    cleanup_expired_holds(db)
+
+    # Bestehende Holds dieses Tokens, die nicht mehr gewünscht sind, freigeben.
+    db.query(models.ShiftHold).filter(
+        models.ShiftHold.token == hold_token,
+        ~models.ShiftHold.shift_id.in_(wanted_ids),
+    ).delete(synchronize_session=False)
+
+    shifts = (
+        db.query(models.Shift)
+        .filter(models.Shift.id.in_(wanted_ids))
+        .options(joinedload(models.Shift.area), joinedload(models.Shift.day))
+        .all()
+    )
+    shift_by_id = {s.id: s for s in shifts}
+
+    held_by_others = active_holds_by_shift(db, exclude_token=hold_token)
+    my_holds = {
+        h.shift_id
+        for h in db.query(models.ShiftHold).filter(
+            models.ShiftHold.token == hold_token,
+            models.ShiftHold.expires_at >= datetime.utcnow(),
+        ).all()
+    }
+
+    expires = datetime.utcnow() + timedelta(minutes=settings.DIRECT_SIGNUP_HOLD_MINUTES)
+    unavailable = []
+    for sid in wanted_ids:
+        s = shift_by_id.get(sid)
+        if s is None:
+            unavailable.append({"id": sid, "label": "Diese Schicht"})
+            continue
+        n_assigned = db.query(models.ShiftAssignment).filter(
+            models.ShiftAssignment.shift_id == sid
+        ).count()
+        taken = n_assigned + held_by_others.get(sid, 0)
+        already_mine = sid in my_holds
+        # Platz frei ODER ich halte sie eh schon -> (re-)servieren.
+        if taken < s.capacity or already_mine:
+            if already_mine:
+                db.query(models.ShiftHold).filter(
+                    models.ShiftHold.token == hold_token,
+                    models.ShiftHold.shift_id == sid,
+                ).update({"expires_at": expires}, synchronize_session=False)
+            else:
+                db.add(models.ShiftHold(shift_id=sid, token=hold_token, expires_at=expires))
+        else:
+            label = f"{s.area.name} · {s.day.label} · {s.time_range}"
+            unavailable.append({"id": sid, "label": label})
+
+    if unavailable:
+        # Nichts committen, wenn eine weg ist: die Person bleibt in Schritt 1,
+        # ändert die Auswahl und versucht es erneut.
+        db.rollback()
+        return JSONResponse({"ok": False, "unavailable": unavailable})
+
+    db.commit()
+    return JSONResponse({"ok": True, "expires_in_minutes": settings.DIRECT_SIGNUP_HOLD_MINUTES})
 
 
 # ---------------------------------------------------------------------------
@@ -232,13 +371,14 @@ async def direct_submit(request: Request, background_tasks: BackgroundTasks,
     deposit_ok = form.get("deposit_ok")  # "yes" | "no" | None
     deposit_alt = (form.get("deposit_alternative") or "").strip()
     is_adult = form.get("is_adult_confirmed") == "on"
+    hold_token = (form.get("hold_token") or "").strip()
 
     form_echo = {
         "first_name": first_name, "last_name": last_name, "email": email,
         "phone": phone or "", "date_of_birth": dob_raw, "password": password,
         "only_one_shift": only_one, "shift_ids": shift_ids,
         "deposit_ok": deposit_ok, "deposit_alternative": deposit_alt,
-        "is_adult_confirmed": is_adult,
+        "is_adult_confirmed": is_adult, "hold_token": hold_token,
     }
 
     def fail(msgs, code=400):
@@ -248,6 +388,7 @@ async def direct_submit(request: Request, background_tasks: BackgroundTasks,
             preview_token=cfg_token if is_preview else None,
             errors=msgs if isinstance(msgs, list) else [msgs],
             form_data=form_echo,
+            hold_token=hold_token or None,
             status_code=code,
         )
 
@@ -381,6 +522,14 @@ async def direct_submit(request: Request, background_tasks: BackgroundTasks,
                 db, helper_id=helper.id, shift=s,
                 action="assigned", source="self_signup",
             )
+
+        # Eigene Reservierungen sind erfüllt -> freigeben. Abgelaufene fremde
+        # gleich mit wegräumen (lazy cleanup).
+        if hold_token:
+            db.query(models.ShiftHold).filter(
+                models.ShiftHold.token == hold_token
+            ).delete(synchronize_session=False)
+        cleanup_expired_holds(db)
 
         db.commit()
     except Exception:

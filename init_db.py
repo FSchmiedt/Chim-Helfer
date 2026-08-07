@@ -34,6 +34,11 @@ DEFAULT_AREAS = [
 
 # Spalten, die in früheren Versionen noch nicht existierten.
 # Dialekt-agnostisch formuliert (funktioniert in SQLite + Postgres).
+#
+# Hinweis: NEUE TABELLEN (z.B. shift_holds für die Direkt-Anmeldung) müssen
+# hier NICHT eingetragen werden — die legt Base.metadata.create_all() beim
+# Start automatisch an. NEW_COLUMNS_BY_TABLE ist nur für nachträglich
+# ergänzte Spalten auf BESTEHENDEN Tabellen.
 NEW_COLUMNS_BY_TABLE = {
     "helpers": [
         ("password_hash", "VARCHAR(255)"),

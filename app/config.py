@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     DEPOSIT_AMOUNT_EUR: int = 160
     # Preis für das Ein-Schicht-Ticket (Anzeige).
     ONE_SHIFT_PRICE_EUR: int = 75
+    # Wie lange hält eine Schicht-Reservierung, wenn jemand im Direkt-Flow von
+    # Schritt 1 (Schicht wählen) zu Schritt 2 (Kontakt) weitergeht? So lange
+    # ist die Schicht für andere geblockt, damit man in Ruhe ausfüllen kann,
+    # ohne dass sie einem weggeschnappt wird. Abgelaufene Reservierungen werden
+    # beim nächsten Laden/Buchen automatisch weggeräumt (kein Cronjob nötig).
+    DIRECT_SIGNUP_HOLD_MINUTES: int = 15
 
     # Bereiche, die vom Tausch-Board ausgeschlossen sind (Komma-getrennt).
     # Diese Schichten kann man nicht aufs Board stellen; Tausch macht der Admin

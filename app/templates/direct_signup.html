@@ -27,6 +27,7 @@
 
 <form method="post" action="/mitmachen" id="direct-form" novalidate>
   {% if preview %}<input type="hidden" name="preview_token" value="{{ preview_token }}" />{% endif %}
+  <input type="hidden" name="hold_token" value="{{ hold_token }}" />
 
   <!-- Fortschritts-Anzeige -->
   <ol class="flex items-center gap-2 mb-6 text-xs" id="step-indicator">
@@ -121,8 +122,9 @@
     {% endif %}
 
     {% if total_open > 0 %}
+    <div id="hold-error" class="mb-3 p-3 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-sm" hidden></div>
     <div class="flex justify-end mt-4">
-      <button type="button" data-next="2"
+      <button type="button" data-next="2" id="to-step-2"
               class="bg-primary-600 hover:bg-primary-700 text-white font-medium px-6 py-3 rounded-md shadow-sm transition">
         Weiter →
       </button>
@@ -324,14 +326,89 @@
     refreshCount();
   });
 
+  // --- Reservierung setzen (Kinoticket): beim Schritt 1 -> 2 ---
+  const holdError = document.getElementById('hold-error');
+  const toStep2 = document.getElementById('to-step-2');
+  const holdTokenEl = form.querySelector('[name="hold_token"]');
+  const previewTokenEl = form.querySelector('[name="preview_token"]');
+
+  function showHoldError(html) {
+    if (!holdError) { alert(html.replace(/<[^>]+>/g, '')); return; }
+    holdError.innerHTML = html;
+    holdError.hidden = false;
+    holdError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  function clearHoldError() { if (holdError) { holdError.hidden = true; holdError.innerHTML = ''; } }
+
+  function removeShiftOption(id) {
+    // Weggeschnappte Schicht abwählen + optisch als vergeben markieren.
+    const cb = form.querySelector('.shift-check[value="' + id + '"]');
+    if (!cb) return;
+    cb.checked = false;
+    cb.disabled = true;
+    const label = cb.closest('.shift-option');
+    if (label) {
+      label.classList.add('opacity-50');
+      label.classList.remove('border-primary-600', 'bg-primary-600/5');
+      const meta = label.querySelector('.block.text-xs');
+      if (meta) meta.textContent = 'gerade vergeben';
+    }
+  }
+
+  async function reserveAndAdvance() {
+    const sel = selectedChecks();
+    if (sel.length < 1) { showHoldError('Bitte wähle mindestens eine Schicht aus.'); return; }
+    clearHoldError();
+    if (toStep2) { toStep2.disabled = true; toStep2.textContent = 'Moment …'; }
+
+    const body = new URLSearchParams();
+    sel.forEach(c => body.append('shift_ids', c.value));
+    if (holdTokenEl) body.append('hold_token', holdTokenEl.value);
+    if (previewTokenEl) body.append('preview_token', previewTokenEl.value);
+
+    let data;
+    try {
+      const resp = await fetch('/mitmachen/hold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+      data = await resp.json();
+    } catch (err) {
+      if (toStep2) { toStep2.disabled = false; toStep2.textContent = 'Weiter →'; }
+      showHoldError('Verbindungsproblem — bitte versuch es gleich nochmal.');
+      return;
+    }
+    if (toStep2) { toStep2.disabled = false; toStep2.textContent = 'Weiter →'; }
+
+    if (data && data.ok) {
+      showStep(2);
+      return;
+    }
+    // Mindestens eine Schicht ist weg -> in Schritt 1 bleiben, markieren.
+    if (data && Array.isArray(data.unavailable) && data.unavailable.length) {
+      const names = data.unavailable.map(u => u.label).filter(Boolean);
+      data.unavailable.forEach(u => removeShiftOption(u.id));
+      refreshCount();
+      showHoldError(
+        '<strong>Leider zu spät:</strong> ' +
+        (names.length ? names.join(', ') + ' ' : 'Eine deiner Schichten ') +
+        'wurde gerade von jemand anderem geschnappt. Bitte wähle stattdessen eine andere Schicht.'
+      );
+    } else {
+      showHoldError('Das hat gerade nicht geklappt. Bitte lade die Seite neu und versuch es erneut.');
+    }
+  }
+
   // --- Weiter/Zurück-Buttons mit Mini-Validierung ---
   form.addEventListener('click', function (e) {
     const nextBtn = e.target.closest('[data-next]');
     const prevBtn = e.target.closest('[data-prev]');
     if (nextBtn) {
       const target = Number(nextBtn.dataset.next);
-      if (target === 2 && selectedChecks().length < 1) {
-        alert('Bitte wähle mindestens eine Schicht aus.');
+      if (target === 2) {
+        // Statt direkt weiter: erst serverseitig reservieren.
+        reserveAndAdvance();
         return;
       }
       if (target === 3) {

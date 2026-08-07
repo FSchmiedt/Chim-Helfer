@@ -248,3 +248,98 @@ def test_valid_preview_token_bypasses_closed_switch(client, session_local, direc
     }, follow_redirects=False)
     assert r.status_code == 303
     assert _get_helper(session_local, "preview@example.org") is not None
+
+
+# ---------------------------------------------------------------------------
+# Reservierungen ("Holds") — Kinoticket-Prinzip
+# ---------------------------------------------------------------------------
+def _hold_token(client):
+    """Frischen hold_token aus einem GET / ziehen."""
+    import re
+    html = client.get("/").text
+    m = re.search(r'name="hold_token" value="([^"]+)"', html)
+    assert m, "hold_token nicht im Formular gefunden"
+    return m.group(1)
+
+
+def _make_shift(session_local, area_name, day_label, cap, start_h):
+    """Legt eine frische Schicht an und gibt ihre id zurück (Test-Isolation)."""
+    from datetime import time as _t
+    db = session_local()
+    try:
+        area = db.query(models.Area).filter_by(name=area_name).one()
+        day = db.query(models.FestivalDay).filter_by(label=day_label).one()
+        s = models.Shift(area_id=area.id, day_id=day.id,
+                         start_time=_t(start_h, 0), end_time=_t(start_h + 2, 0),
+                         capacity=cap)
+        db.add(s)
+        db.commit()
+        return s.id
+    finally:
+        db.close()
+
+
+def _clear_holds(session_local):
+    db = session_local()
+    try:
+        db.query(models.ShiftHold).delete()
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_hold_blocks_second_person_on_full_shift(client, session_local, direct_open):
+    """capacity-1-Schicht: wer zuerst reserviert, hält sie; der zweite fliegt raus."""
+    sid = _make_shift(session_local, "Bar", "Freitag", cap=1, start_h=6)
+    tok_a = _hold_token(client)
+    tok_b = _hold_token(client)
+    assert tok_a != tok_b
+
+    r = client.post("/mitmachen/hold", data={"shift_ids": [sid], "hold_token": tok_a})
+    assert r.json()["ok"] is True
+
+    r = client.post("/mitmachen/hold", data={"shift_ids": [sid], "hold_token": tok_b})
+    body = r.json()
+    assert body["ok"] is False
+    assert len(body["unavailable"]) == 1
+    assert body["unavailable"][0]["id"] == sid
+    _clear_holds(session_local)
+
+
+def test_held_shift_disappears_from_listing(client, session_local, direct_open):
+    sid = _make_shift(session_local, "Bar", "Freitag", cap=1, start_h=8)
+    tok_a = _hold_token(client)
+    client.post("/mitmachen/hold", data={"shift_ids": [sid], "hold_token": tok_a})
+
+    # Ein anderer Betrachter (frischer Token) sieht die Schicht nicht mehr.
+    html = client.get("/").text
+    assert f'value="{sid}"' not in html
+    _clear_holds(session_local)
+
+
+def test_own_hold_is_released_after_booking(client, session_local, direct_open):
+    sid = _make_shift(session_local, "Bar", "Freitag", cap=2, start_h=10)
+    tok = _hold_token(client)
+    client.post("/mitmachen/hold", data={"shift_ids": [sid], "hold_token": tok})
+
+    r = client.post("/mitmachen", data={
+        "shift_ids": [sid], "hold_token": tok,
+        "first_name": "Held", "last_name": "Frei", "email": "held@example.org",
+        "date_of_birth": "1990-01-01", "is_adult_confirmed": "on", "deposit_ok": "yes",
+    }, follow_redirects=False)
+    assert r.status_code == 303
+
+    db = session_local()
+    try:
+        remaining = db.query(models.ShiftHold).filter(models.ShiftHold.token == tok).count()
+        assert remaining == 0
+    finally:
+        db.close()
+
+
+def test_hold_requires_token_and_shifts(client, session_local, direct_open):
+    r = client.post("/mitmachen/hold", data={"hold_token": ""})
+    assert r.status_code == 400
+    tok = _hold_token(client)
+    r = client.post("/mitmachen/hold", data={"hold_token": tok})  # keine shift_ids
+    assert r.status_code == 400

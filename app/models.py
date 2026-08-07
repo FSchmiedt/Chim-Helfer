@@ -415,3 +415,32 @@ class ShiftSwapRequest(Base):
     from_assignment: Mapped["ShiftAssignment"] = relationship()
     from_helper: Mapped["Helper"] = relationship(foreign_keys=[from_helper_id])
     to_helper: Mapped["Helper"] = relationship(foreign_keys=[to_helper_id])
+
+
+# ---------------------------------------------------------------------------
+# Temporäre Schicht-Reservierung (Direkt-Flow, "Kinoticket"-Prinzip)
+# ---------------------------------------------------------------------------
+class ShiftHold(Base):
+    """Kurzlebige Reservierung einer Schicht während der Direkt-Anmeldung.
+
+    Wenn im Direkt-Flow jemand von Schritt 1 (Schicht wählen) zu Schritt 2
+    (Kontaktdaten) weitergeht, wird die gewählte Schicht für andere geblockt,
+    damit sie einem beim Ausfüllen nicht weggeschnappt wird. Der Hold gilt für
+    einen anonymen Formular-Token (kein Helfer nötig, die Person hat ja noch
+    kein Konto) und läuft nach DIRECT_SIGNUP_HOLD_MINUTES ab.
+
+    Abgelaufene Holds werden lazy weggeräumt (beim Laden der Schichtliste, beim
+    Reservieren und beim finalen Buchen) — bewusst ohne Cronjob, passend zum
+    pragmatischen Charakter des Tools.
+    """
+    __tablename__ = "shift_holds"
+    __table_args__ = (UniqueConstraint("shift_id", "token", name="uq_hold_shift_token"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    shift_id: Mapped[int] = mapped_column(ForeignKey("shifts.id", ondelete="CASCADE"), index=True)
+    # Anonymer Session-Token aus dem Anmeldeformular (hidden field).
+    token: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    shift: Mapped["Shift"] = relationship()
