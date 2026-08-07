@@ -10,7 +10,7 @@ Abgedeckt:
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -23,6 +23,15 @@ from app.passwords import hash_password
 
 
 SURNAMES = ("Paid", "Announced", "Exempt", "Nothing", "Returned")
+
+# Fristen bewusst RELATIV zu heute. Mit festen Kalenderdaten laufen diese
+# Tests irgendwann ins Messer: der Pfand-Sweep (app/pfand_promises.py) traegt
+# Zusagen ab Frist + GRACE_DAYS automatisch wieder aus und wird bei jedem
+# Admin-Login und jedem Aufruf von /admin/helpers mitgestartet. Ein fixes
+# Datum in der Vergangenheit heisst also: die Zusage ist weg, bevor der
+# erste Assert greift.
+SOON = date.today() + timedelta(days=14)
+LATER = date.today() + timedelta(days=21)
 
 
 @pytest.fixture(scope="module")
@@ -41,7 +50,7 @@ def ctx():
             return h
 
         mk("Paid", pfand_paid=True)
-        mk("Announced", pfand_announced=True, pfand_announced_due=date(2026, 8, 3))
+        mk("Announced", pfand_announced=True, pfand_announced_due=SOON)
         mk("Exempt", pfand_exempt=True)
         mk("Nothing")
         mk("Returned", pfand_paid=True, pfand_returned=True)
@@ -116,7 +125,7 @@ def test_saving_paid_clears_announcement(ctx):
     hid = ids["Announced"]
     client.post(f"/admin/helpers/{hid}/save", data={
         "section": "pfand", "pfand_paid": "on",
-        "pfand_announced": "on", "pfand_announced_due": "2026-08-03",
+        "pfand_announced": "on", "pfand_announced_due": SOON.isoformat(),
     }, follow_redirects=False)
 
     db = SessionLocal()
@@ -135,14 +144,14 @@ def test_announcement_with_due_date_persists(ctx):
     hid = ids["Nothing"]
     client.post(f"/admin/helpers/{hid}/save", data={
         "section": "pfand", "pfand_announced": "on",
-        "pfand_announced_due": "2026-08-10",
+        "pfand_announced_due": LATER.isoformat(),
     }, follow_redirects=False)
 
     db = SessionLocal()
     try:
         h = db.get(models.Helper, hid)
         assert h.pfand_announced is True
-        assert h.pfand_announced_due == date(2026, 8, 10)
+        assert h.pfand_announced_due == LATER
     finally:
         db.close()
 
@@ -152,7 +161,7 @@ def test_unchecking_announcement_clears_due_date(ctx):
     _admin(client)
     hid = ids["Nothing"]
     client.post(f"/admin/helpers/{hid}/save", data={
-        "section": "pfand", "pfand_announced_due": "2026-08-10",
+        "section": "pfand", "pfand_announced_due": LATER.isoformat(),
     }, follow_redirects=False)
 
     db = SessionLocal()
@@ -216,7 +225,7 @@ def test_me_announcement_stays_internal(ctx):
     try:
         h = db.get(models.Helper, ids["Nothing"])
         h.pfand_announced = True
-        h.pfand_announced_due = date(2026, 8, 10)
+        h.pfand_announced_due = LATER
         db.commit()
     finally:
         db.close()
