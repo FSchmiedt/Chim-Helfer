@@ -48,6 +48,8 @@ services:
         sync: false  # geheimes Token für die interne Vorschau: /vorschau?key=<TOKEN>
       - key: DEPOSIT_AMOUNT_EUR
         value: "160"  # angezeigte Kautionshöhe im letzten Schritt
+      - key: DEPOSIT_PARTIAL_EUR
+        value: "80"   # mittlere Kautions-Option ("ich kann X € zahlen")
       - key: ONE_SHIFT_PRICE_EUR
         value: "75"   # angezeigter Preis fürs Ein-Schicht-Ticket
       - key: SWAP_EXCLUDED_AREAS

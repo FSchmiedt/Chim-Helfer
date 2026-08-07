@@ -11,10 +11,19 @@
 </div>
 {% endif %}
 
-<div class="mb-4 text-sm text-slate-600">
-  Schon dabei?
-  <a href="/login" class="text-primary-600 hover:underline font-medium">Hier einloggen</a>.
+<div class="mb-6 bg-white rounded-lg shadow-sm border border-slate-200 p-4
+            flex flex-wrap items-center justify-between gap-3">
+  <p class="text-base text-slate-700">
+    <strong>Schon dabei?</strong> Dann trag dich direkt in „Mein Bereich“ ein.
+  </p>
+  <a href="/login"
+     class="bg-white border border-primary-600 text-primary-600 hover:bg-primary-600 hover:text-white
+            font-medium px-5 py-2.5 rounded-md transition whitespace-nowrap">
+    Hier einloggen
+  </a>
 </div>
+
+<h1 class="text-2xl font-semibold mb-4">Noch offene Schichten</h1>
 
 {% if errors %}
 <div class="mb-6 p-4 rounded-md bg-red-50 border border-red-200 text-red-800">
@@ -157,12 +166,7 @@
           <input type="tel" name="phone" value="{{ form_data.phone or '' }}"
                  placeholder="für WhatsApp / Telegram"
                  class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
-          <p class="text-xs text-slate-500 mt-1">Optional. Falls du dort besser erreichbar bist als per E-Mail.</p>
-        </div>
-        <div>
-          <label class="block text-sm font-medium mb-1">Geburtsdatum *</label>
-          <input type="date" name="date_of_birth" value="{{ form_data.date_of_birth or '' }}"
-                 class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+          <p class="text-xs text-slate-500 mt-1">Hilfreich, wenn du über Handy besser erreichbar bist als per E-Mail.</p>
         </div>
       </div>
     </section>
@@ -183,15 +187,6 @@
           leer lassen
         </button>
       </div>
-    </section>
-
-    <section class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 mb-4">
-      <label class="flex items-start gap-3">
-        <input type="checkbox" name="is_adult_confirmed"
-               {% if form_data.is_adult_confirmed %}checked{% endif %}
-               class="mt-1 rounded text-primary-600 focus:ring-primary-600" />
-        <span class="text-sm">Ich bestätige, dass ich <strong>mindestens 18 Jahre alt</strong> bin.</span>
-      </label>
     </section>
 
     <div class="flex justify-between mt-4">
@@ -222,20 +217,27 @@
           <span class="text-sm">Ja, ich kann die {{ deposit_amount }} € Kaution zahlen.</span>
         </label>
         <label class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer hover:bg-slate-50">
+          <input type="radio" name="deposit_ok" value="partial"
+                 {% if form_data.deposit_ok == 'partial' %}checked{% endif %}
+                 class="mt-0.5 text-primary-600 focus:ring-primary-600 deposit-radio" />
+          <span class="text-sm">Ich kann <strong>{{ deposit_partial }} €</strong> zahlen.</span>
+        </label>
+        <label id="deposit-no-option"
+               class="flex items-start gap-3 p-3 border rounded-lg cursor-pointer hover:bg-slate-50">
           <input type="radio" name="deposit_ok" value="no"
                  {% if form_data.deposit_ok == 'no' %}checked{% endif %}
                  class="mt-0.5 text-primary-600 focus:ring-primary-600 deposit-radio" />
-          <span class="text-sm">Das ist gerade schwierig für mich.</span>
+          <span class="text-sm">Das ist wirklich nicht möglich, aber ich kann garantieren, dass ich komme, weil…</span>
         </label>
       </div>
 
       <div id="deposit-alt-wrap" class="mt-3" {% if form_data.deposit_ok != 'no' %}hidden{% endif %}>
-        <label class="block text-sm font-medium mb-1">Was könntest du als Kaution zahlen?</label>
-        <input type="text" name="deposit_alternative" value="{{ form_data.deposit_alternative or '' }}"
-               placeholder="z.B. 80 € — wir finden gemeinsam eine Lösung"
-               class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border" />
+        <label class="block text-sm font-medium mb-1">… weil *</label>
+        <textarea name="deposit_alternative" rows="3"
+                  placeholder="Erzähl uns kurz, warum wir uns auf dich verlassen können."
+                  class="w-full rounded border-slate-300 focus:border-primary-600 focus:ring-primary-600 px-3 py-2 border">{{ form_data.deposit_alternative or '' }}</textarea>
         <p class="text-xs text-slate-500 mt-1">
-          Kein Problem, das kriegen wir hin. Schreib einfach rein, was für dich machbar ist.
+          Kein Problem, das kriegen wir hin. Wir lesen das und melden uns bei dir.
         </p>
       </div>
     </section>
@@ -413,13 +415,11 @@
       }
       if (target === 3) {
         // Schritt-2-Pflichtfelder grob prüfen
-        const req = ['first_name', 'last_name', 'email', 'date_of_birth'];
+        const req = ['first_name', 'last_name', 'email'];
         for (const name of req) {
           const el = form.querySelector('[name="' + name + '"]');
           if (el && !el.value.trim()) { el.focus(); alert('Bitte fülle alle Pflichtfelder (*) aus.'); return; }
         }
-        const adult = form.querySelector('[name="is_adult_confirmed"]');
-        if (adult && !adult.checked) { alert('Bitte bestätige, dass du volljährig bist.'); return; }
       }
       showStep(target);
     }
@@ -433,13 +433,24 @@
     pwClear.addEventListener('click', () => { pwField.value = ''; pwField.focus(); });
   }
 
-  // --- Kautions-Alternative ein/ausblenden ---
-  const altWrap = document.getElementById('deposit-alt-wrap');
-  form.querySelectorAll('.deposit-radio').forEach(r => {
-    r.addEventListener('change', () => {
-      if (altWrap) altWrap.hidden = (form.querySelector('[name="deposit_ok"]:checked')?.value !== 'no');
-    });
-  });
+  // --- Kautions-Optionen ---
+  const altWrap  = document.getElementById('deposit-alt-wrap');
+  const noOption = document.getElementById('deposit-no-option');
+
+  function syncDeposit() {
+    // Beim 75-Euro-Ticket ist "geht gar nicht" keine Option: das Ticket IST
+    // schon der verguenstigte Weg. Also ausblenden UND eine evtl. vorher
+    // gesetzte Auswahl zuruecknehmen, damit nichts Unsichtbares abgeschickt wird.
+    const wantsOne = onlyOne && onlyOne.checked;
+    if (noOption) noOption.hidden = !!wantsOne;
+    const noRadio = form.querySelector('[name="deposit_ok"][value="no"]');
+    if (wantsOne && noRadio && noRadio.checked) noRadio.checked = false;
+    if (altWrap) altWrap.hidden = (form.querySelector('[name="deposit_ok"]:checked')?.value !== 'no');
+  }
+
+  form.querySelectorAll('.deposit-radio').forEach(r => r.addEventListener('change', syncDeposit));
+  if (onlyOne) onlyOne.addEventListener('change', syncDeposit);
+  syncDeposit();
 
   // --- Start ---
   refreshCount();

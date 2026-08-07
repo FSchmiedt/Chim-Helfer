@@ -41,6 +41,13 @@ from ..shift_log import log_shift_change
 router = APIRouter(tags=["direct"])
 templates = Jinja2Templates(directory="app/templates")
 
+# Der Direkt-Flow fragt kein Geburtsdatum ab - das Alter wird am Eingang per
+# Ausweis geprueft. Die Spalte helpers.date_of_birth ist aber NOT NULL, also
+# schreiben wir denselben Platzhalter, den auch das Admin-Formular setzt, wenn
+# dort nichts eingetragen wird. Achtung beim Auswerten: fuer alle ueber diesen
+# Weg Angemeldeten steht im Admin der 01.01.1990, das ist kein echtes Datum.
+PLACEHOLDER_DOB = date(1990, 1, 1)
+
 
 # ---------------------------------------------------------------------------
 # Passwort-Vorschlag: freundliche, leicht merkbare Kräuter/Gewürze + Zahl.
@@ -205,6 +212,7 @@ def render_direct_page(
             "hold_token": hold_token,
             "suggested_password": (form_data or {}).get("password") or suggest_password(),
             "deposit_amount": settings.DEPOSIT_AMOUNT_EUR,
+            "deposit_partial": settings.DEPOSIT_PARTIAL_EUR,
             "one_shift_price": settings.ONE_SHIFT_PRICE_EUR,
             "bar_hint": settings.DIRECT_SIGNUP_BAR_HINT,
         },
@@ -366,19 +374,17 @@ async def direct_submit(request: Request, background_tasks: BackgroundTasks,
     last_name = (form.get("last_name") or "").strip()
     email = (form.get("email") or "").strip().lower()
     phone = (form.get("phone") or "").strip() or None
-    dob_raw = (form.get("date_of_birth") or "").strip()
     password = form.get("password") or ""  # kann leer bleiben
     deposit_ok = form.get("deposit_ok")  # "yes" | "no" | None
     deposit_alt = (form.get("deposit_alternative") or "").strip()
-    is_adult = form.get("is_adult_confirmed") == "on"
     hold_token = (form.get("hold_token") or "").strip()
 
     form_echo = {
         "first_name": first_name, "last_name": last_name, "email": email,
-        "phone": phone or "", "date_of_birth": dob_raw, "password": password,
+        "phone": phone or "", "password": password,
         "only_one_shift": only_one, "shift_ids": shift_ids,
         "deposit_ok": deposit_ok, "deposit_alternative": deposit_alt,
-        "is_adult_confirmed": is_adult, "hold_token": hold_token,
+        "hold_token": hold_token,
     }
 
     def fail(msgs, code=400):
@@ -409,27 +415,24 @@ async def direct_submit(request: Request, background_tasks: BackgroundTasks,
         errs.append("Bitte gib deinen Nachnamen an.")
     if not email or "@" not in email or "." not in email.split("@")[-1]:
         errs.append("Bitte gib eine gültige Email-Adresse an.")
-    # Geburtsdatum + Volljährigkeit
-    dob: Optional[date] = None
-    if not dob_raw:
-        errs.append("Bitte gib dein Geburtsdatum an.")
-    else:
-        try:
-            dob = date.fromisoformat(dob_raw)
-        except ValueError:
-            errs.append("Bitte gib ein gültiges Geburtsdatum an (JJJJ-MM-TT).")
-    if dob is not None:
-        today = date.today()
-        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-        if age < 18:
-            errs.append("Du musst mindestens 18 Jahre alt sein.")
-        elif age > 100:
-            errs.append("Das Geburtsdatum scheint nicht zu stimmen.")
-    if not is_adult:
-        errs.append("Bitte bestätige, dass du volljährig bist.")
-    # Kautions-Frage
-    if deposit_ok not in ("yes", "no"):
+    # Kein Geburtsdatum, keine Volljaehrigkeits-Checkbox: das Alter wird beim
+    # Einlass am Ausweis geprueft, nicht im Formular.
+    #
+    # Kautions-Frage: "yes" (voll), "partial" (Teilbetrag), "no" (gar nicht,
+    # dafuer mit Begruendung).
+    if deposit_ok not in ("yes", "partial", "no"):
         errs.append("Bitte beantworte die Frage zur Kaution.")
+    elif deposit_ok == "no":
+        if only_one:
+            # Das 75-Euro-Ticket IST bereits der verguenstigte Weg - im Formular
+            # ist die Option dann ausgeblendet. Hier nur der Server-Riegel, falls
+            # jemand sie trotzdem mitschickt.
+            errs.append(
+                "Beim Ein-Schicht-Ticket brauchen wir eine Kaution. Bitte wähle, "
+                "welchen Betrag du zahlen kannst."
+            )
+        elif not deposit_alt:
+            errs.append("Bitte schreib uns kurz, warum wir uns auf dich verlassen können.")
     if errs:
         return fail(errs)
 
@@ -468,7 +471,10 @@ async def direct_submit(request: Request, background_tasks: BackgroundTasks,
         last_name=last_name,
         email=email,
         phone=phone,
-        date_of_birth=dob,
+        # Der Direkt-Flow fragt kein Geburtsdatum ab (Ausweiskontrolle am
+        # Eingang). Die Spalte ist aber NOT NULL, also derselbe Platzhalter,
+        # den auch das Admin-Formular setzt, wenn nichts eingetragen wurde.
+        date_of_birth=PLACEHOLDER_DOB,
         notes=notes,
         is_adult_confirmed=True,
         accepted_no_guarantee=True,  # direkte Buchung = bewusste, verbindliche Zusage
@@ -567,9 +573,12 @@ def _deposit_note(deposit_ok: Optional[str], deposit_alt: str, amount: int) -> s
     """Baut die Kautions-Selbstauskunft als Notiz (im Admin sichtbar)."""
     if deposit_ok == "yes":
         return f"[Direkt-Anmeldung] Kaution ({amount} €): kann ich zahlen."
+    if deposit_ok == "partial":
+        return (f"[Direkt-Anmeldung] Kaution ({amount} €): kann ich nicht voll zahlen, "
+                f"aber {settings.DEPOSIT_PARTIAL_EUR} €.")
     if deposit_ok == "no":
         if deposit_alt:
-            return (f"[Direkt-Anmeldung] Kaution ({amount} €): kann ich NICHT voll zahlen. "
-                    f"Angebot: {deposit_alt}")
-        return f"[Direkt-Anmeldung] Kaution ({amount} €): kann ich NICHT voll zahlen (kein Betrag angegeben)."
+            return (f"[Direkt-Anmeldung] Kaution ({amount} €): gar nicht möglich. "
+                    f"Begründung: {deposit_alt}")
+        return f"[Direkt-Anmeldung] Kaution ({amount} €): gar nicht möglich (keine Begründung angegeben)."
     return "[Direkt-Anmeldung] Kaution: keine Angabe."

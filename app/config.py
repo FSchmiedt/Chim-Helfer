@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     DIRECT_SIGNUP_BAR_HINT: str = "Bitte nur mit Bar-Erfahrung eintragen."
     # Kautionshöhe (Anzeige) für den letzten Schritt des Direkt-Flows.
     DEPOSIT_AMOUNT_EUR: int = 160
+    # Teilbetrag, den man als mittlere Option statt der vollen Kaution
+    # anbieten kann (Anzeige im letzten Schritt des Direkt-Flows).
+    DEPOSIT_PARTIAL_EUR: int = 80
     # Preis für das Ein-Schicht-Ticket (Anzeige).
     ONE_SHIFT_PRICE_EUR: int = 75
     # Wie lange hält eine Schicht-Reservierung, wenn jemand im Direkt-Flow von

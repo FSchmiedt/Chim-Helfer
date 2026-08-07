@@ -44,8 +44,12 @@ def session_local():
         db.add_all([
             models.Shift(area_id=bar.id, day_id=d1.id, label="Hauptbar",
                          start_time=time(20, 0), end_time=time(23, 0), capacity=2),
+            # Bewusst grosszuegig: mehrere Tests buchen hier nacheinander, und
+            # die Fixture ist modulweit (Buchungen bleiben also stehen). Zu
+            # knapp bemessen heisst: der letzte Test scheitert an "voll" statt
+            # an dem, was er eigentlich prueft.
             models.Shift(area_id=einlass.id, day_id=d1.id,
-                         start_time=time(18, 0), end_time=time(21, 0), capacity=3),
+                         start_time=time(18, 0), end_time=time(21, 0), capacity=10),
             models.Shift(area_id=einlass.id, day_id=d2.id,
                          start_time=time(18, 0), end_time=time(21, 0), capacity=1),
         ])
@@ -141,8 +145,8 @@ def test_two_shifts_signup_creates_helper_and_logs_in(client, session_local, dir
     r = client.post("/mitmachen", data={
         "shift_ids": [ein_fr, ein_sa],
         "first_name": "Anna", "last_name": "Test", "email": "anna@example.org",
-        "phone": "0170", "date_of_birth": "1990-05-05",
-        "password": "ingwer-482", "is_adult_confirmed": "on", "deposit_ok": "yes",
+        "phone": "0170",
+        "password": "ingwer-482", "deposit_ok": "yes",
     }, follow_redirects=False)
     assert r.status_code == 303
     assert r.headers["location"].startswith("/me")
@@ -152,7 +156,6 @@ def test_two_shifts_signup_creates_helper_and_logs_in(client, session_local, dir
     assert h is not None
     assert len(h.shift_assignments) == 2
     assert h.password_hash  # gesetzt
-    assert h.is_adult_confirmed is True
     assert h.wants_only_one_shift is False
     assert h.notes and "kann ich zahlen" in h.notes
     assert len(h.availabilities) == 2
@@ -163,15 +166,15 @@ def test_one_shift_ticket_sets_discount_and_allows_empty_password(client, sessio
     r = client.post("/mitmachen", data={
         "shift_ids": [bar_fr], "only_one_shift": "on",
         "first_name": "Bea", "last_name": "Bar", "email": "bea@example.org",
-        "date_of_birth": "1985-01-01", "password": "",
-        "is_adult_confirmed": "on", "deposit_ok": "no", "deposit_alternative": "80 Euro",
+        "password": "",
+        "deposit_ok": "partial",
     }, follow_redirects=False)
     assert r.status_code == 303
     h = _get_helper(session_local, "bea@example.org")
     assert h.wants_only_one_shift is True
     assert h.discount_offered is True
     assert h.password_hash is None  # leer erlaubt
-    assert "80 Euro" in h.notes
+    assert "80 €" in h.notes
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +185,7 @@ def test_existing_email_is_rejected_with_login_hint(client, session_local, direc
     r = client.post("/mitmachen", data={
         "shift_ids": [bar_fr],
         "first_name": "Anna", "last_name": "Nochmal", "email": "anna@example.org",
-        "date_of_birth": "1990-05-05", "is_adult_confirmed": "on", "deposit_ok": "yes",
+        "deposit_ok": "yes",
     }, follow_redirects=False)
     assert r.status_code == 400
     assert "schon ein Konto" in r.text
@@ -195,21 +198,36 @@ def test_more_than_two_shifts_rejected(client, session_local, direct_open):
     r = client.post("/mitmachen", data={
         "shift_ids": [ein_fr, bar_fr, ein_sa],
         "first_name": "Cim", "last_name": "Drei", "email": "cim@example.org",
-        "date_of_birth": "1990-01-01", "is_adult_confirmed": "on", "deposit_ok": "yes",
+        "deposit_ok": "yes",
     }, follow_redirects=False)
     assert r.status_code == 400
     assert "höchstens zwei" in r.text
 
 
-def test_minor_rejected(client, session_local, direct_open):
-    bar_fr = _shift_id(session_local, "Bar", "Freitag")
+def test_no_age_fields_asked(client, session_local, direct_open):
+    """Geburtsdatum und Volljaehrigkeits-Haken sind raus - Ausweis am Eingang."""
+    r = client.get("/")
+    assert 'name="date_of_birth"' not in r.text
+    assert 'name="is_adult_confirmed"' not in r.text
+    assert "18 Jahre" not in r.text
+
+
+def test_signup_without_birthdate_uses_placeholder(client, session_local, direct_open):
+    ein_fr = _shift_id(session_local, "Einlass", "Freitag")
     r = client.post("/mitmachen", data={
-        "shift_ids": [bar_fr],
-        "first_name": "Jung", "last_name": "Zu", "email": "jung@example.org",
-        "date_of_birth": "2015-01-01", "is_adult_confirmed": "on", "deposit_ok": "yes",
+        "shift_ids": [ein_fr],
+        "first_name": "Ohne", "last_name": "Datum", "email": "ohnedatum@example.org",
+        "deposit_ok": "yes",
     }, follow_redirects=False)
-    assert r.status_code == 400
-    assert "18 Jahre" in r.text
+    assert r.status_code == 303
+    db = session_local()
+    try:
+        h = db.query(models.Helper).filter_by(email="ohnedatum@example.org").one()
+        # Platzhalter statt NULL: die Spalte ist NOT NULL, das Alter wird am
+        # Eingang geprueft.
+        assert h.date_of_birth == date(1990, 1, 1)
+    finally:
+        db.close()
 
 
 def test_missing_deposit_answer_rejected(client, session_local, direct_open):
@@ -217,7 +235,7 @@ def test_missing_deposit_answer_rejected(client, session_local, direct_open):
     r = client.post("/mitmachen", data={
         "shift_ids": [bar_fr],
         "first_name": "Kai", "last_name": "Ohne", "email": "kai@example.org",
-        "date_of_birth": "1990-01-01", "is_adult_confirmed": "on",
+       
     }, follow_redirects=False)
     assert r.status_code == 400
     assert "Kaution" in r.text
@@ -231,7 +249,7 @@ def test_closed_switch_blocks_post(client, session_local, direct_closed):
     r = client.post("/mitmachen", data={
         "shift_ids": [bar_fr],
         "first_name": "X", "last_name": "Y", "email": "closed@example.org",
-        "date_of_birth": "1990-01-01", "is_adult_confirmed": "on", "deposit_ok": "yes",
+        "deposit_ok": "yes",
     }, follow_redirects=False)
     assert r.status_code == 403
 
@@ -244,7 +262,7 @@ def test_valid_preview_token_bypasses_closed_switch(client, session_local, direc
     r = client.post("/mitmachen", data={
         "shift_ids": [bar_fr], "preview_token": PREVIEW_TOKEN,
         "first_name": "Vor", "last_name": "Schau", "email": "preview@example.org",
-        "date_of_birth": "1990-01-01", "is_adult_confirmed": "on", "deposit_ok": "yes",
+        "deposit_ok": "yes",
     }, follow_redirects=False)
     assert r.status_code == 303
     assert _get_helper(session_local, "preview@example.org") is not None
@@ -325,7 +343,7 @@ def test_own_hold_is_released_after_booking(client, session_local, direct_open):
     r = client.post("/mitmachen", data={
         "shift_ids": [sid], "hold_token": tok,
         "first_name": "Held", "last_name": "Frei", "email": "held@example.org",
-        "date_of_birth": "1990-01-01", "is_adult_confirmed": "on", "deposit_ok": "yes",
+        "deposit_ok": "yes",
     }, follow_redirects=False)
     assert r.status_code == 303
 
@@ -343,3 +361,77 @@ def test_hold_requires_token_and_shifts(client, session_local, direct_open):
     tok = _hold_token(client)
     r = client.post("/mitmachen/hold", data={"hold_token": tok})  # keine shift_ids
     assert r.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Kautions-Optionen (voll / Teilbetrag / gar nicht mit Begruendung)
+# ---------------------------------------------------------------------------
+def test_partial_deposit_option_is_offered(client, session_local, direct_open):
+    r = client.get("/")
+    assert 'value="partial"' in r.text
+    assert "80" in r.text
+
+
+def test_partial_deposit_is_saved(client, session_local, direct_open):
+    ein_fr = _shift_id(session_local, "Einlass", "Freitag")
+    r = client.post("/mitmachen", data={
+        "shift_ids": [ein_fr],
+        "first_name": "Teil", "last_name": "Zahler", "email": "teil@example.org",
+        "deposit_ok": "partial",
+    }, follow_redirects=False)
+    assert r.status_code == 303
+    h = _get_helper(session_local, "teil@example.org")
+    assert "80 €" in h.notes
+
+
+def test_no_deposit_requires_reason(client, session_local, direct_open):
+    ein_fr = _shift_id(session_local, "Einlass", "Freitag")
+    r = client.post("/mitmachen", data={
+        "shift_ids": [ein_fr],
+        "first_name": "Ohne", "last_name": "Grund", "email": "ohnegrund@example.org",
+        "deposit_ok": "no",
+    }, follow_redirects=False)
+    assert r.status_code == 400
+    assert "verlassen" in r.text
+
+
+def test_no_deposit_with_reason_is_saved(client, session_local, direct_open):
+    ein_fr = _shift_id(session_local, "Einlass", "Freitag")
+    r = client.post("/mitmachen", data={
+        "shift_ids": [ein_fr],
+        "first_name": "Mit", "last_name": "Grund", "email": "mitgrund@example.org",
+        "deposit_ok": "no",
+        "deposit_alternative": "ich baue seit Jahren mit auf",
+    }, follow_redirects=False)
+    assert r.status_code == 303
+    h = _get_helper(session_local, "mitgrund@example.org")
+    assert "Begründung" in h.notes
+    assert "seit Jahren" in h.notes
+
+
+def test_one_shift_ticket_may_not_skip_deposit(client, session_local, direct_open):
+    """Beim 75-Euro-Ticket ist "geht gar nicht" im Formular ausgeblendet -
+    der Server muss es zusaetzlich abweisen, falls es doch mitgeschickt wird."""
+    ein_fr = _shift_id(session_local, "Einlass", "Freitag")
+    r = client.post("/mitmachen", data={
+        "shift_ids": [ein_fr], "only_one_shift": "on",
+        "first_name": "Schlau", "last_name": "Fuchs", "email": "fuchs@example.org",
+        "deposit_ok": "no", "deposit_alternative": "trust me",
+    }, follow_redirects=False)
+    assert r.status_code == 400
+    assert "Ein-Schicht-Ticket" in r.text
+
+
+# ---------------------------------------------------------------------------
+# Startseite: Login-Box und Ueberschrift
+# ---------------------------------------------------------------------------
+def test_index_has_login_box_and_heading(client, session_local, direct_open):
+    r = client.get("/")
+    assert "Hier einloggen" in r.text
+    assert "Noch offene Schichten" in r.text
+
+
+def test_phone_hint_wording(client, session_local, direct_open):
+    r = client.get("/")
+    assert "Hilfreich, wenn du über Handy" in r.text
+    assert "Optional. Falls du dort" not in r.text
