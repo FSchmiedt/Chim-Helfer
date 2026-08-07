@@ -1098,13 +1098,20 @@ def shifts_list(
 
 
 @router.post("/shifts/bulk-edit")
-async def shifts_bulk_edit(request: Request, db: Session = Depends(get_db)):
+async def shifts_bulk_edit(request: Request, background_tasks: BackgroundTasks,
+                            db: Session = Depends(get_db)):
     """Speichert Zeiten/Label/Kapazitaet fuer mehrere Schichten auf einmal.
 
     Kommt vom Bearbeiten-Modus in der Schichtplan-Uebersicht: ein Bereich
     wird komplett als ein Formular abgeschickt (Felder heissen
     start_time_<id>, end_time_<id>, label_<id>, capacity_<id>), statt dass
     man jede Schicht einzeln oeffnen muss.
+
+    Aendert sich eine UHRZEIT, bekommen die bereits eingetragenen
+    Helfer:innen eine Mail. Label und Kapazitaet loesen bewusst keine aus:
+    das sind interne Angaben, die fuer die Person nichts aendern. Ueber die
+    Checkbox `notify` im Formular laesst sich der Versand pro Speichern
+    abschalten (z.B. beim Aufraeumen des Plans vor dem Veroeffentlichen).
     """
     if (r := require_admin_redirect(request)):
         return r
@@ -1129,10 +1136,14 @@ async def shifts_bulk_edit(request: Request, db: Session = Depends(get_db)):
         if shift_ids else []
     )
 
+    notify = form.get("notify") == "on"
+
     changed = 0
     warnings = []
+    time_changes = []   # (shift, alte Zeitangabe) - nur wo sich die Uhrzeit bewegt hat
     for s in shifts:
         filled = len(s.assignments)
+        old_time_range = s.time_range
         raw_start = form.get(f"start_time_{s.id}")
         raw_end = form.get(f"end_time_{s.id}")
         raw_label = (form.get(f"label_{s.id}") or "").strip()
@@ -1150,15 +1161,23 @@ async def shifts_bulk_edit(request: Request, db: Session = Depends(get_db)):
             new_capacity = filled
 
         touched = False
+        time_touched = False
         try:
             if raw_start and dtime.fromisoformat(raw_start) != s.start_time:
                 s.start_time = dtime.fromisoformat(raw_start)
                 touched = True
+                time_touched = True
             if raw_end and dtime.fromisoformat(raw_end) != s.end_time:
                 s.end_time = dtime.fromisoformat(raw_end)
                 touched = True
+                time_touched = True
         except ValueError:
             warnings.append(f"{s.area.name} {s.day.label}: ungültige Uhrzeit ignoriert.")
+
+        # Nur Uhrzeit zaehlt. Bei belegten Schichten sammeln wir hier, bei
+        # leeren gibt es niemanden zu benachrichtigen.
+        if time_touched and filled:
+            time_changes.append((s, old_time_range))
 
         new_label = raw_label or None
         if new_label != s.label:
@@ -1173,7 +1192,26 @@ async def shifts_bulk_edit(request: Request, db: Session = Depends(get_db)):
 
     db.commit()
 
+    # Erst committen, dann bauen und versenden: eine Mail ueber eine Zeit, die
+    # gar nicht gespeichert wurde, waere schlimmer als eine fehlende Mail.
+    # Die Session ist hier noch offen, die Lazy-Loads (area/day/helper) gehen
+    # also durch - deshalb bauen wir die Texte hier und geben nur fertige
+    # Strings an den Hintergrund-Task weiter.
+    notified = 0
+    if notify and time_changes:
+        from ..email_sender import build_shift_time_changed_notice, deliver, send_in_background
+        for s, old_time_range in time_changes:
+            for a in s.assignments:
+                prepared = build_shift_time_changed_notice(a.helper, s, old_time_range)
+                send_in_background(background_tasks, deliver, prepared,
+                                   label="shift_time_changed_notice")
+                notified += 1
+
     msg = f"success: {changed} Schicht(en) aktualisiert." if changed else "info: Keine Änderungen."
+    if notified:
+        msg += f" {notified} Helfer:in(nen) über die neue Zeit informiert."
+    elif notify is False and time_changes:
+        msg += " Zeitänderung ohne Benachrichtigung gespeichert."
     if warnings:
         msg = "error: " + " | ".join(warnings) + (f" ({changed} Schicht(en) insgesamt gespeichert.)" if changed else "")
 

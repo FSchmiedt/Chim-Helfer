@@ -75,6 +75,11 @@
         <input type="hidden" name="day_id" value="{{ day_id or '' }}" />
         <div class="flex items-center justify-end gap-2 mb-2 mt-2">
           <span class="edit-only text-xs text-slate-500 mr-auto">Zeiten, Label und Kapazität ändern – Zuweisungen bleiben wie sie sind.</span>
+          <label class="edit-only flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer"
+                 title="Nur bei geänderter Uhrzeit, und nur an Personen, die in der Schicht stehen. Label und Kapazität lösen nie eine Mail aus.">
+            <input type="checkbox" name="notify" checked class="rounded border-slate-300" />
+            bei Zeitänderung benachrichtigen
+          </label>
           <button type="submit" class="edit-only px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm">
             Änderungen speichern
           </button>

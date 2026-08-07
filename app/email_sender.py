@@ -435,6 +435,35 @@ def send_shift_change_notice_to_helper(helper, shift, action: str, role=None) ->
     deliver(build_shift_change_notice_for_helper(helper, shift, action, role))
 
 
+def build_shift_time_changed_notice(helper, shift, old_time_range: str) -> dict:
+    """Die Schicht bleibt, nur die Uhrzeit hat sich verschoben.
+
+    Bewusst eine eigene Mail und nicht 'unassigned' + 'assigned': fuer die
+    Person aendert sich nichts an der Zusage, sie muss nur zu einer anderen
+    Zeit da sein. Alte UND neue Zeit stehen drin, damit man beim Ueberfliegen
+    im Postfach sofort sieht, ob es die eigene Schicht betrifft.
+    """
+    subject = f"Deine Schicht wurde zeitlich verschoben – {settings.FESTIVAL_NAME}"
+    body = (
+        f"Hallo {helper.first_name},\n\n"
+        f"die Zeit einer deiner Schichten hat sich geändert:\n\n"
+        f"  Bereich:  {shift.area.name}\n"
+        f"  Tag:      {shift.day.label}\n"
+        f"  Bisher:   {old_time_range}\n"
+        f"  NEU:      {shift.time_range}\n\n"
+        f"Du bleibst für die Schicht eingetragen - du musst nichts tun, nur die "
+        f"neue Uhrzeit im Kalender nachtragen.\n\n"
+        f"Passt die neue Zeit nicht, melde dich bitte bei uns.\n\n"
+        f"Liebe Grüße\nDas Helfer-Team"
+    )
+    return {
+        "to_email": helper.email,
+        "to_name": helper.first_name,
+        "subject": subject,
+        "body": body,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 75€-Ein-Schicht-Angebot (manuell vom Admin ausgeloest)
 # ---------------------------------------------------------------------------
